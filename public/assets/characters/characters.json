@@ -1,0 +1,190 @@
+{
+ "flame": {
+  "height": 2.315,
+  "parts": [
+   "flame__Head",
+   "flame__Torso",
+   "flame__Leg_R",
+   "flame__Foot_R",
+   "flame__Leg_L",
+   "flame__Foot_L",
+   "flame__Arm_Wave",
+   "flame__Arm_Down",
+   "flame__Hand_Wave",
+   "flame__Thumb_Wave",
+   "flame__Hand_Down",
+   "flame__Thumb_Down",
+   "flame__Flame",
+   "flame__Seed",
+   "flame__Eye_R",
+   "flame__Eye_L"
+  ],
+  "arms": [
+   "flame__Arm_Wave",
+   "flame__Arm_Down"
+  ],
+  "legs": [
+   "flame__Leg_R",
+   "flame__Leg_L"
+  ],
+  "tris": 46316,
+  "kb": 130
+ },
+ "flower": {
+  "height": 2.258,
+  "parts": [
+   "flower__Face",
+   "flower__Petal_0",
+   "flower__Petal_1",
+   "flower__Petal_2",
+   "flower__Petal_3",
+   "flower__Petal_4",
+   "flower__Petal_5",
+   "flower__Eye_R",
+   "flower__Eye_L",
+   "flower__Torso",
+   "flower__Leg_R",
+   "flower__Foot_R",
+   "flower__Leg_L",
+   "flower__Foot_L",
+   "flower__Arm_R",
+   "flower__Hand_R",
+   "flower__Arm_L",
+   "flower__Hand_L",
+   "flower__Seed"
+  ],
+  "arms": [
+   "flower__Arm_R",
+   "flower__Arm_L"
+  ],
+  "legs": [
+   "flower__Leg_R",
+   "flower__Leg_L"
+  ],
+  "tris": 53224,
+  "kb": 148
+ },
+ "crystal": {
+  "height": 2.167,
+  "parts": [
+   "crystal__Head",
+   "crystal__Eye_R",
+   "crystal__Eye_L",
+   "crystal__Torso",
+   "crystal__Leg_R",
+   "crystal__Foot_R",
+   "crystal__Leg_L",
+   "crystal__Foot_L",
+   "crystal__Sash",
+   "crystal__Floating_Gem",
+   "crystal__Arm_Up",
+   "crystal__Hand_Up",
+   "crystal__Thumb_Up",
+   "crystal__Arm_Down",
+   "crystal__Hand_Down",
+   "crystal__Hand_Down_Thumb"
+  ],
+  "arms": [
+   "crystal__Arm_Up",
+   "crystal__Arm_Down"
+  ],
+  "legs": [
+   "crystal__Leg_R",
+   "crystal__Leg_L"
+  ],
+  "tris": 41406,
+  "kb": 122
+ },
+ "vine": {
+  "height": 2.286,
+  "parts": [
+   "vine__Head",
+   "vine__Eye_R",
+   "vine__Eye_L",
+   "vine__Curl",
+   "vine__Torso",
+   "vine__Leg_Back",
+   "vine__Foot_Back",
+   "vine__Ankle_Back",
+   "vine__Leg_Front",
+   "vine__Foot_Front",
+   "vine__Ankle_Front",
+   "vine__Arm_L",
+   "vine__Hand_L",
+   "vine__Wrist_L",
+   "vine__Arm_R",
+   "vine__Hand_R",
+   "vine__Wrist_R"
+  ],
+  "arms": [
+   "vine__Arm_L",
+   "vine__Arm_R"
+  ],
+  "legs": [
+   "vine__Leg_Back",
+   "vine__Leg_Front"
+  ],
+  "tris": 35380,
+  "kb": 105
+ },
+ "cloud": {
+  "height": 2.045,
+  "parts": [
+   "cloud__Eye_R",
+   "cloud__Eye_L",
+   "cloud__Torso",
+   "cloud__Leg_R",
+   "cloud__Foot_R",
+   "cloud__Leg_L",
+   "cloud__Foot_L",
+   "cloud__Star",
+   "cloud__Arm_R",
+   "cloud__Hand_R",
+   "cloud__Thumb_R",
+   "cloud__Arm_L",
+   "cloud__Hand_L",
+   "cloud__Thumb_L",
+   "cloud__Head"
+  ],
+  "arms": [
+   "cloud__Arm_R",
+   "cloud__Arm_L"
+  ],
+  "legs": [
+   "cloud__Leg_R",
+   "cloud__Leg_L"
+  ],
+  "tris": 45680,
+  "kb": 129
+ },
+ "hexa": {
+  "height": 2.183,
+  "parts": [
+   "hexa__Head",
+   "hexa__Eye_R",
+   "hexa__Eye_L",
+   "hexa__Torso",
+   "hexa__Leg_R",
+   "hexa__Foot_R",
+   "hexa__Leg_L",
+   "hexa__Foot_L",
+   "hexa__ChestGem",
+   "hexa__Arm_Out",
+   "hexa__Hand_Out",
+   "hexa__Thumb_Out",
+   "hexa__Arm_Down",
+   "hexa__Hand_Down",
+   "hexa__Hand_Down_Thumb"
+  ],
+  "arms": [
+   "hexa__Arm_Out",
+   "hexa__Arm_Down"
+  ],
+  "legs": [
+   "hexa__Leg_R",
+   "hexa__Leg_L"
+  ],
+  "tris": 37324,
+  "kb": 113
+ }
+}

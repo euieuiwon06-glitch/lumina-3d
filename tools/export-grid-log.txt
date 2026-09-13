@@ -1,0 +1,46 @@
+﻿
+=== overlook
+[export overlook    1.6s] 근경 오브젝트 116개, 약 396,848 tris
+[export overlook    2.3s] 격자 215x168 셀 계산
+[export overlook   49.7s] 연결 영역 180개, 최대 22,678칸, 남김 [21416, 22678]
+[export overlook   49.8s] 보행 가능 칸 44,094
+[export overlook   49.8s] JSON C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\overlook.json
+[export overlook   49.8s] 완료
+  → 51s, exit 0
+
+=== ice
+[export ice    0.1s] 근경 오브젝트 245개, 약 600,644 tris
+[export ice    1.1s] 격자 197x249 셀 계산
+[export ice   35.1s] 연결 영역 582개, 최대 23,401칸, 남김 [10552, 23401]
+[export ice   35.1s] 보행 가능 칸 33,953
+[export ice   35.2s] JSON C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\ice.json
+[export ice   35.2s] 완료
+  → 37s, exit 0
+
+=== nursery
+[export nursery    0.8s] 근경 오브젝트 429개, 약 777,552 tris
+[export nursery    3.5s] 격자 165x130 셀 계산
+[export nursery    6.6s] 연결 영역 69개, 최대 6,959칸, 남김 [6959]
+[export nursery    6.6s] 보행 가능 칸 6,959
+[export nursery    6.7s] JSON C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\nursery.json
+[export nursery    6.7s] 완료
+  → 8s, exit 0
+
+=== twilight
+[export twilight    0.5s] 근경 오브젝트 241개, 약 586,168 tris
+[export twilight    1.5s] 격자 158x250 셀 계산
+[export twilight   29.2s] 연결 영역 17개, 최대 8,826칸, 남김 [8826]
+[export twilight   29.2s] 보행 가능 칸 8,826
+[export twilight   29.2s] JSON C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\twilight.json
+[export twilight   29.2s] 완료
+Error: Not freed memory blocks: 1, total unfreed memory 0.000092 MB
+  → 31s, exit 0
+
+=== solar
+[export solar    7.3s] 근경 오브젝트 394개, 약 1,398,648 tris
+[export solar    9.7s] 격자 240x444 셀 계산
+[export solar  113.9s] 연결 영역 1224개, 최대 57,674칸, 남김 [24566, 36544, 57674]
+[export solar  114.0s] 보행 가능 칸 118,784
+[export solar  114.1s] JSON C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\solar.json
+[export solar  114.1s] 완료
+  → 116s, exit 0

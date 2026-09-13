@@ -1,0 +1,39 @@
+/* 01_확정_디자인가이드 3장 초기 토큰. 기준 시안과 비교해 조정한 값은 주석으로 남긴다. */
+
+@font-face {
+  font-family: 'NanumSquareRound';
+  src: url('/fonts/NanumSquareRoundR.woff2') format('woff2');
+  font-weight: 400 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'NanumSquareRound';
+  src: url('/fonts/NanumSquareRoundB.woff2') format('woff2');
+  font-weight: 600 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'NanumSquareRound';
+  src: url('/fonts/NanumSquareRoundEB.woff2') format('woff2');
+  font-weight: 800;
+  font-display: swap;
+}
+
+:root {
+  --ink: #59437e;
+  --ink-muted: #78639c;
+  --lilac: #c9b7ee;
+  --panel: rgba(236, 225, 250, 0.88);
+  /* 가이드 초기값 .55는 하늘 배경 위에서 글자 대비가 부족해 .72로 올림 */
+  --hud: rgba(222, 208, 246, 0.72);
+  --mint: #b9e6d3;
+  --peach: #ffd0a9;
+  --peach-deep: #ffbe8c;
+  --ivory: #fff4dc;
+  --stroke: rgba(255, 244, 220, 0.65);
+  --shadow: 0 6px 22px rgba(89, 67, 126, 0.16);
+  --font: 'NanumSquareRound', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+
+  --blob-a: 30px 38px 32px 42px / 34px 30px 40px 32px;
+  --blob-b: 42px 34px 40px 30px / 36px 42px 30px 38px;
+}

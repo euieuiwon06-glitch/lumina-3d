@@ -1,0 +1,135 @@
+/* 3D 버전 덮어쓰기: 캔버스는 창 전체, UI 무대는 그 위에 겹친다(무대 크기는 JS가 창에 맞춰 넓힌다). */
+
+#world {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: block;
+  touch-action: none;
+  cursor: grab;
+  background: #3b3f9e;
+}
+#world.is-dragging {
+  cursor: grabbing;
+}
+
+#stage {
+  position: fixed;
+  left: 0;
+  top: 0;
+  background: none;
+  pointer-events: none;
+}
+#stage #ui > *,
+#stage #overlays > * {
+  pointer-events: auto;
+}
+
+#boot {
+  position: fixed;
+}
+
+/* 시점 조작 */
+/* 알림(오른쪽 아래)과 겹치지 않게 그 위에 둔다 */
+.toast {
+  bottom: 118px;
+}
+[data-scene='ice'] .toast {
+  bottom: 118px;
+  top: auto;
+}
+.cam-controls {
+  position: absolute;
+  right: 30px;
+  bottom: 34px;
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  border-radius: var(--blob-b);
+}
+.cam-controls .icon-btn {
+  width: 46px;
+  height: 46px;
+  font-size: 24px;
+}
+
+/* 잠긴 출구 안내 */
+.prompt.is-locked .prompt-btn {
+  background: rgba(201, 183, 238, 0.85);
+}
+.prompt .ico {
+  margin-right: 4px;
+}
+
+/* 빛 놓기 카드: 시안처럼 작게 */
+.sp-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 0;
+  font-size: 16px;
+  color: var(--ink-muted);
+}
+.slot-panel {
+  width: 360px;
+}
+.sp-actions .btn {
+  white-space: nowrap;
+}
+.craft-panel {
+  width: 400px;
+}
+/* 퍼즐 패널은 오른쪽 위(알림·시점 버튼과 겹치지 않게) */
+.puzzle-panel {
+  top: 140px;
+  bottom: auto;
+}
+
+/* 장면 전환 가림막 */
+.fader {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 50% 45%, rgba(141, 149, 232, 0.96), rgba(56, 52, 140, 0.98));
+  z-index: 40;
+  transition: opacity 0.45s ease;
+}
+.fader.is-out {
+  opacity: 0;
+  pointer-events: none;
+}
+.fader-card {
+  display: grid;
+  gap: 16px;
+  justify-items: center;
+  color: var(--ivory);
+  font-size: 24px;
+  font-weight: 600;
+}
+.fader-text {
+  margin: 0;
+}
+.fader-bar {
+  width: 300px;
+  height: 8px;
+  border-radius: 99px;
+  background: rgba(255, 244, 220, 0.25);
+  overflow: hidden;
+}
+.fader-bar-fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: var(--ivory);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 0.2s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fader {
+    transition: none;
+  }
+}

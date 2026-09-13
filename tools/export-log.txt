@@ -1,0 +1,89 @@
+﻿
+=== walkway
+[export walkway    0.2s] 근경 오브젝트 142개, 약 312,976 tris
+[export walkway    0.7s] 격자 261x340 셀 계산
+[export walkway   50.1s] 보행 가능 칸 22,355
+[export walkway   50.1s] JSON C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\walkway.json
+[export walkway   51.2s] GLB C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\walkway.glb 0.7MB
+[export walkway   51.6s] Cycles GPU OPTIX ['NVIDIA GeForce RTX 4060 Laptop GPU', 'NVIDIA GeForce RTX 4060 Laptop GPU']
+[export walkway  152.1s] 파노라마 C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\walkway_pano.jpg
+[export walkway  152.1s] 완료
+  → 154s, exit 0
+
+=== workshop
+[export workshop    3.2s] 근경 오브젝트 127개, 약 414,460 tris
+[export workshop    5.2s] 격자 67x70 셀 계산
+[export workshop    5.6s] 보행 가능 칸 1,385
+[export workshop    5.7s] JSON C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\workshop.json
+[export workshop    8.1s] GLB C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\workshop.glb 0.9MB
+[export workshop    8.3s] Cycles GPU OPTIX ['NVIDIA GeForce RTX 4060 Laptop GPU', 'NVIDIA GeForce RTX 4060 Laptop GPU']
+[export workshop   98.1s] 파노라마 C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\workshop_pano.jpg
+[export workshop   98.1s] 완료
+  → 101s, exit 0
+
+=== neighborhood
+[export neighborhood    1.5s] 근경 오브젝트 284개, 약 673,468 tris
+[export neighborhood    2.5s] 격자 253x250 셀 계산
+[export neighborhood   49.8s] 보행 가능 칸 80,038
+[export neighborhood   49.8s] JSON C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\neighborhood.json
+[export neighborhood   51.3s] GLB C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\neighborhood.glb 1.2MB
+[export neighborhood   51.5s] Cycles GPU OPTIX ['NVIDIA GeForce RTX 4060 Laptop GPU', 'NVIDIA GeForce RTX 4060 Laptop GPU']
+[export neighborhood  155.5s] 파노라마 C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\neighborhood_pano.jpg
+[export neighborhood  155.5s] 완료
+  → 159s, exit 0
+
+=== overlook
+[export overlook    2.0s] 근경 오브젝트 116개, 약 396,848 tris
+[export overlook    2.7s] 격자 215x168 셀 계산
+[export overlook   42.9s] 보행 가능 칸 25,518
+[export overlook   42.9s] JSON C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\overlook.json
+[export overlook   44.1s] GLB C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\overlook.glb 0.7MB
+[export overlook   44.3s] Cycles GPU OPTIX ['NVIDIA GeForce RTX 4060 Laptop GPU', 'NVIDIA GeForce RTX 4060 Laptop GPU']
+[export overlook  145.6s] 파노라마 C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\overlook_pano.jpg
+[export overlook  145.6s] 완료
+  → 149s, exit 0
+
+=== ice
+[export ice    0.1s] 근경 오브젝트 245개, 약 600,644 tris
+[export ice    1.2s] 격자 197x249 셀 계산
+[export ice   27.1s] 보행 가능 칸 25,412
+[export ice   27.1s] JSON C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\ice.json
+[export ice   29.0s] GLB C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\ice.glb 4.2MB
+[export ice   29.2s] Cycles GPU OPTIX ['NVIDIA GeForce RTX 4060 Laptop GPU', 'NVIDIA GeForce RTX 4060 Laptop GPU']
+[export ice  123.1s] 파노라마 C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\ice_pano.jpg
+[export ice  123.1s] 완료
+  → 126s, exit 0
+
+=== nursery
+[export nursery    0.9s] 근경 오브젝트 429개, 약 777,552 tris
+[export nursery    3.5s] 격자 165x130 셀 계산
+[export nursery    6.6s] 보행 가능 칸 8,757
+[export nursery    6.7s] JSON C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\nursery.json
+[export nursery    9.1s] GLB C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\nursery.glb 0.7MB
+[export nursery    9.3s] Cycles GPU OPTIX ['NVIDIA GeForce RTX 4060 Laptop GPU', 'NVIDIA GeForce RTX 4060 Laptop GPU']
+[export nursery   89.0s] 파노라마 C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\nursery_pano.jpg
+[export nursery   89.0s] 완료
+  → 91s, exit 0
+
+=== twilight
+[export twilight    0.6s] 근경 오브젝트 241개, 약 586,168 tris
+[export twilight    1.5s] 격자 158x250 셀 계산
+[export twilight   25.2s] 보행 가능 칸 12,978
+[export twilight   25.2s] JSON C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\twilight.json
+[export twilight   26.3s] GLB C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\twilight.glb 0.7MB
+[export twilight   26.4s] Cycles GPU OPTIX ['NVIDIA GeForce RTX 4060 Laptop GPU', 'NVIDIA GeForce RTX 4060 Laptop GPU']
+[export twilight  114.2s] 파노라마 C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\twilight_pano.jpg
+[export twilight  114.2s] 완료
+Error: Not freed memory blocks: 1, total unfreed memory 0.000092 MB
+  → 117s, exit 0
+
+=== solar
+[export solar    7.1s] 근경 오브젝트 394개, 약 1,398,648 tris
+[export solar    9.4s] 격자 240x444 셀 계산
+[export solar  103.3s] 보행 가능 칸 99,328
+[export solar  103.4s] JSON C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\solar.json
+[export solar  105.3s] GLB C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\solar.glb 1.8MB
+[export solar  105.5s] Cycles GPU OPTIX ['NVIDIA GeForce RTX 4060 Laptop GPU', 'NVIDIA GeForce RTX 4060 Laptop GPU']
+[export solar  236.5s] 파노라마 C:\Users\user\OneDrive - UOS\바탕 화면\게임제작\04_개발\lumina-3d\public\assets\scenes\solar_pano.jpg
+[export solar  236.6s] 완료
+  → 240s, exit 0
