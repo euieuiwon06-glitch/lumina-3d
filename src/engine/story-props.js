@@ -503,6 +503,159 @@ export class SleepingBud {
   }
 }
 
+function runeTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 512;
+  const g = c.getContext('2d');
+  g.translate(256, 256);
+  const ring = (r, w, a) => {
+    g.beginPath();
+    g.arc(0, 0, r, 0, Math.PI * 2);
+    g.lineWidth = w;
+    g.strokeStyle = `rgba(255,255,255,${a})`;
+    g.stroke();
+  };
+  // 바깥에서 안으로 번지는 부드러운 바닥빛
+  const fill = g.createRadialGradient(0, 0, 0, 0, 0, 250);
+  fill.addColorStop(0, 'rgba(255,255,255,0.28)');
+  fill.addColorStop(0.7, 'rgba(255,255,255,0.1)');
+  fill.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = fill;
+  g.fillRect(-256, -256, 512, 512);
+  ring(238, 7, 0.95);
+  ring(222, 2, 0.6);
+  ring(150, 4, 0.75);
+  ring(96, 2, 0.5);
+  // 항로 눈금: 굵은 방향 표시 8개와 가는 눈금
+  for (let i = 0; i < 64; i++) {
+    const a = (i / 64) * Math.PI * 2;
+    const big = i % 8 === 0;
+    const r0 = big ? 160 : 196;
+    g.beginPath();
+    g.moveTo(Math.cos(a) * r0, Math.sin(a) * r0);
+    g.lineTo(Math.cos(a) * 218, Math.sin(a) * 218);
+    g.lineWidth = big ? 6 : 2;
+    g.strokeStyle = `rgba(255,255,255,${big ? 0.9 : 0.45})`;
+    g.stroke();
+  }
+  // 네 갈래 별(나침판)
+  g.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2 - Math.PI / 2;
+    const r = i % 2 ? 26 : 132;
+    g[i ? 'lineTo' : 'moveTo'](Math.cos(a) * r, Math.sin(a) * r);
+  }
+  g.closePath();
+  g.fillStyle = 'rgba(255,255,255,0.35)';
+  g.fill();
+  const t = new THREE.CanvasTexture(c);
+  t.center.set(0.5, 0.5);
+  return t;
+}
+
+/**
+ * 항해대 표시: 항로를 고르는 구역이 멀리서도 기능하는 곳으로 보이게
+ *  - 바닥: 나침판 무늬 빛이 천천히 돈다
+ *  - 세 수반: 살구·민트·라일락 빛기둥이 하늘로 솟고 빛 알갱이가 떠오른다
+ *  - 항해 나무: 가늘고 긴 신호 빛줄기
+ * ready(항로를 고를 수 있을 때)면 밝게 맥동, 아니면 은은하게. 카메라가 기둥에 가까우면 옅어진다
+ */
+export class NavBeacon {
+  constructor({ center, radii, basins, tree }) {
+    this.object = new THREE.Group();
+    beamTex ??= beamTexture();
+    const rune = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), additive(runeTexture(), '#E6D6FF', 0.8));
+    rune.rotation.x = -Math.PI / 2;
+    rune.position.set(center[0], center[1], center[2]);
+    rune.scale.set(radii[0], radii[1], 1);
+    rune.renderOrder = 3;
+    this.rune = rune;
+    this.object.add(rune);
+    // 구역 가장자리를 따라 바닥에서 솟는 빛 커튼(멀리서도 '여기가 항해대'로 보이게)
+    const cgeo = new THREE.CylinderGeometry(1, 1.04, 3.6, 96, 1, true);
+    cgeo.translate(0, 1.8, 0);
+    this.curtain = new THREE.Mesh(cgeo, additive(beamTex, '#D6ACFF', 0.7));
+    this.curtain.position.set(center[0], center[1] + 0.3, center[2]);
+    this.curtain.scale.set(radii[0] + 0.3, 1, radii[1] + 0.3);
+    this.curtain.renderOrder = 4;
+    this.object.add(this.curtain);
+    this.columns = basins.map((b, i) => {
+      const h = 11;
+      const geo = new THREE.CylinderGeometry(b.r * 0.55, b.r, h, 32, 1, true);
+      geo.translate(0, h / 2, 0);
+      const mesh = new THREE.Mesh(geo, additive(beamTex, b.color, 0.5));
+      mesh.position.set(...b.at);
+      mesh.renderOrder = 4;
+      // 수반 수면 위 빛 고리
+      const halo = new THREE.Mesh(new THREE.RingGeometry(b.r * 0.55, b.r * 1.08, 48), additive(glowTexture(), b.color, 0.7));
+      halo.rotation.x = -Math.PI / 2;
+      halo.position.set(b.at[0], b.at[1] + 0.03, b.at[2]);
+      this.object.add(mesh, halo);
+      return { mesh, halo, base: new THREE.Vector3(...b.at), r: b.r, phase: i * 2.1 };
+    });
+    // 떠오르는 빛 알갱이
+    const n = 72;
+    this.motes = [];
+    const pos = new Float32Array(n * 3);
+    const col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      const c = this.columns[i % this.columns.length];
+      this.motes.push({ c, a: Math.random() * Math.PI * 2, r: Math.random() * c.r * 0.8, speed: 0.6 + Math.random() * 0.9, k: Math.random() });
+      new THREE.Color(basins[i % basins.length].color).toArray(col, i * 3);
+    }
+    const mg = new THREE.BufferGeometry();
+    mg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    mg.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    this.motePoints = new THREE.Points(mg, new THREE.PointsMaterial({ map: glowTexture(), size: 0.45, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
+    this.motePoints.frustumCulled = false;
+    this.object.add(this.motePoints);
+    // 나무 꼭대기에서 하늘로 오르는 신호 빛
+    const sgeo = new THREE.CylinderGeometry(0.12, 0.45, 38, 16, 1, true);
+    sgeo.translate(0, 19, 0);
+    this.signal = new THREE.Mesh(sgeo, additive(beamTex, '#FFF1E0', 0.6));
+    this.signal.position.set(...tree);
+    this.object.add(this.signal);
+    this.star = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: '#FFE4C8', transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
+    this.star.position.set(tree[0], tree[1] + 0.4, tree[2]);
+    this.star.scale.setScalar(3.2);
+    this.object.add(this.star);
+    this.level = 0.5;
+    this._v = new THREE.Vector3();
+  }
+  update(dt, t, { ready = false, near = false, cameraPos = null } = {}) {
+    const want = ready ? (near ? 1.2 : 1) : near ? 0.8 : 0.65;
+    this.level += (want - this.level) * Math.min(1, dt * 2);
+    const L = this.level;
+    const beat = 0.85 + Math.sin(t * 2.4) * 0.15;
+    this.rune.material.map.rotation = t * 0.06;
+    this.rune.material.opacity = (0.5 + L * 0.5) * beat;
+    let curtainFade = 1;
+    if (cameraPos) curtainFade = 0.35 + 0.65 * THREE.MathUtils.smoothstep(Math.hypot((cameraPos.x - this.curtain.position.x) / this.curtain.scale.x, (cameraPos.z - this.curtain.position.z) / this.curtain.scale.z), 1.05, 1.8);
+    this.curtain.material.opacity = (0.55 + L * 0.5) * (0.8 + Math.sin(t * 1.3) * 0.2) * curtainFade;
+    for (const c of this.columns) {
+      let fade = 1;
+      if (cameraPos) {
+        const d = Math.hypot(cameraPos.x - c.base.x, cameraPos.z - c.base.z);
+        fade = THREE.MathUtils.smoothstep(d, c.r + 0.8, c.r + 6);
+      }
+      const wave = 0.75 + Math.sin(t * 1.8 - c.phase) * 0.25;
+      c.mesh.material.opacity = 0.7 * L * wave * fade;
+      c.halo.material.opacity = (0.4 + 0.5 * L) * wave;
+    }
+    const pos = this.motePoints.geometry.attributes.position;
+    for (const [i, m] of this.motes.entries()) {
+      m.k = (m.k + dt * m.speed * 0.09) % 1;
+      const a = m.a + t * 0.5;
+      const r = m.r * (1 - m.k * 0.5);
+      pos.setXYZ(i, m.c.base.x + Math.cos(a) * r, m.c.base.y + 0.1 + m.k * 9, m.c.base.z + Math.sin(a) * r);
+    }
+    pos.needsUpdate = true;
+    this.motePoints.material.opacity = Math.min(1, 0.3 + L * 0.8);
+    this.signal.material.opacity = (0.18 + L * 0.42) * beat;
+    this.star.material.opacity = 0.35 + L * 0.55 * beat;
+  }
+}
+
 /** 반짝이는 관찰 지점(소리·반짝임을 따라 찾기) */
 export class Glimmer {
   constructor(color = '#FFF4DC') {

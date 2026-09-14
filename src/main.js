@@ -11,7 +11,7 @@ import { Character, loadCharacters } from './engine/character.js';
 import { CharacterPreview } from './engine/preview.js';
 import { GroundRing, LightProp, SongCrystal, Sparkles, glowTexture, preloadLightImages, starTexture } from './engine/props.js';
 import { clientToStage, mountStage, stage } from './engine/stage.js';
-import { BridgeGate, BudPod, Glimmer, GuideWisp, Lantern, LightFlow, LightGate, loadLiftTemplate, PetalLift, SlabBridge, SleepingBud } from './engine/story-props.js';
+import { BridgeGate, BudPod, Glimmer, GuideWisp, Lantern, LightFlow, LightGate, loadLiftTemplate, NavBeacon, PetalLift, SlabBridge, SleepingBud } from './engine/story-props.js';
 import { ObjectiveMarker, PathTrail } from './engine/guide-fx.js';
 import { guideTarget } from './game/guide.js';
 import { airMove, cellCenter, findPath, floodReachable, groundAt, nearestReachable, nearestWalkable, pickGround, smoothGround, stepMove, supportAt } from './engine/walkgrid.js';
@@ -714,6 +714,7 @@ async function boot() {
     props.crystals = [];
     props.lanterns.clear();
     props.gate = null;
+    props.beacon = null;
     props.bud = null;
     props.glimmers = [];
     props.flows = [];
@@ -861,6 +862,10 @@ async function boot() {
       const tree = world.navPoint(info.organ.at);
       if (pos && tree) {
         addSpot({ kind: 'organ', id: 'organ', name: info.organ.label, pos, radius: 3, lift: 2.4 });
+        if (info.organ.beacon) {
+          props.beacon = new NavBeacon(info.organ.beacon);
+          dyn.add(props.beacon.object);
+        }
         const c = sceneCenter();
         const flowPts = [pos.clone().add(V3(0, 1.2, 0)), tree.clone().add(V3(0, 2.5, 0)), tree.clone().add(V3(0, 7, 0)), tree.clone().add(V3(-10, 14, 6)), c.clone().add(V3(-22, 9, 0)), c.clone().add(V3(-28, -4, -4))];
         const flowR = flowPts.map((p, i) => (i >= 3 ? V3(2 * tree.x - p.x, p.y, p.z) : p.clone()));
@@ -2274,6 +2279,11 @@ async function boot() {
       }
       if (props.gate && !cinematic) props.gate.apply(time);
       props.bud?.bud.update(dt, time);
+      if (props.beacon) {
+        const organ = spots.find((s) => s.kind === 'organ');
+        const near = !!(organ && actors.player && actors.player.position.distanceTo(organ.pos) < 9);
+        props.beacon.update(dt, time, { ready: state.quests.q04 === 'active' || state.world.chapterDone, near, cameraPos: camera.position });
+      }
       props.glimmers.forEach((g) => g.g.update(time));
       props.flows.forEach((f) => f.update(dt));
       props.crystals.forEach((c) => c.update(dt, time));

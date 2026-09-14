@@ -102,7 +102,21 @@ export const SCENE_INFO = {
       { at: 'ENTRY_촉수산책로', label: '꽃잎 승강대로 촉수 다리 내려가기', kind: 'lift' },
       { at: 'ENTRY_반대편길', label: '반대편 길', kind: 'door', lockedUntil: () => '반대편 길의 빛기둥이 아직 잠들어 있어요. 다음 항해 뒤에 열려요.' },
     ],
-    organ: { at: 'POI_출항준비_빛오르간', label: '항해 나무' },
+    organ: {
+      at: 'POI_출항준비_빛오르간',
+      label: '항해 나무',
+      // 항해대 표시(블렌더 NavGarden 좌표, three): 바닥 나침판·세 수반 빛기둥·나무 신호 빛
+      beacon: {
+        center: [0, 0.13, -9.6],
+        radii: [7.3, 4.3],
+        basins: [
+          { at: [-3.2, 0.92, -10.6], color: '#FFB98A', r: 1.7 },
+          { at: [3.2, 0.92, -10.6], color: '#8FF0CC', r: 1.7 },
+          { at: [0, 0.78, -8.5], color: '#C3A6FF', r: 2.0 },
+        ],
+        tree: [0, 4.3, -11.2],
+      },
+    },
   },
   ice: {
     name: '얼음 성운',
