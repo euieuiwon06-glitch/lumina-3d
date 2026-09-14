@@ -5,6 +5,19 @@ import { glowTexture } from './props.js';
 
 const PETAL = '#E9DDF8';
 const PEACH = '#FFD0A9';
+const MINT = '#B9F0DA';
+const OFF_LINE = new THREE.Color('#C2B6E6');
+
+function mulberry(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 function petalGeometry(width = 1, height = 2.4, depth = 0.22) {
   // 꽃잎 한 장: 넓은 아래, 뾰족한 위, 살짝 오목하게 휜 판
@@ -159,6 +172,118 @@ export class PetalLift {
     const fold = Math.min(1, this.ride);
     this.petals.forEach((p, i) => (p.rotation.x = -1.2 + fold * 1.05 + Math.sin(t * 2 + i) * 0.03));
     this.object.position.y = this.baseY + Math.max(0, this.ride - 1) * 6;
+  }
+}
+
+const easeOutBack = (x) => {
+  const c = 1.5;
+  return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2);
+};
+
+/** 구운 재질(MeshBasic) 밝기: 1 = 블렌더에서 구운 그대로 */
+function setBrightness(mesh, k) {
+  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  for (const m of mats) {
+    // 발광 선은 꺼지면 어두운 선이 아니라 길 색(연보라 새김)으로 가라앉는다
+    if (m.userData.glow) m.color.copy(OFF_LINE).lerp(m.userData.glow, Math.min(1, k)).multiplyScalar(Math.max(1, k));
+    else m.color?.setScalar(k);
+  }
+}
+
+/**
+ * B. 끊긴 판석 다리(블렌더 Quest_Bridge_*): 복원 전에는 판석이 틈 아래에 흩어져 떠 있고,
+ * 복원 연출에서 가까운 쪽부터 차례로 날아와 맞춰진 뒤 가운데 민트 빛줄기가 켜진다
+ */
+export class SlabBridge {
+  constructor(path, parts) {
+    this.object = new THREE.Group();
+    this.path = path;
+    this.pathLen = path.slice(1).reduce((s, p, i) => s + p.distanceTo(path[i]), 0);
+    const from = parts.from;
+    const dir = parts.to.clone().sub(from).setY(0);
+    const len = Math.max(0.1, dir.length());
+    dir.normalize();
+    const rnd = mulberry(7);
+    const piece = (mesh, order) => {
+      const rest = { pos: mesh.position.clone(), quat: mesh.quaternion.clone() };
+      mesh.updateWorldMatrix(true, false);
+      const wp = mesh.getWorldPosition(new THREE.Vector3());
+      const along = THREE.MathUtils.clamp(wp.clone().sub(from).dot(dir) / len, 0, 1);
+      // 틈 사이에 흩어져 떠 있는 게 보이도록 조금만 가라앉힌다
+      const drop = new THREE.Vector3((rnd() - 0.5) * 2.2, -0.7 - rnd() * 1.3, (rnd() - 0.5) * 2.2);
+      const tilt = new THREE.Quaternion().setFromEuler(new THREE.Euler((rnd() - 0.5) * 0.9, (rnd() - 0.5) * 1.2, (rnd() - 0.5) * 0.9));
+      mesh.matrixAutoUpdate = true;
+      return { mesh, rest, scatterPos: rest.pos.clone().add(drop), scatterQuat: rest.quat.clone().multiply(tilt), order: order ?? along, phase: rnd() * 6.28 };
+    };
+    this.pieces = [...parts.slabs.map((m) => piece(m)), ...parts.frame.map((m) => piece(m, 0.55 + rnd() * 0.3))];
+    this.veins = parts.veins;
+    this.progress = 0;
+    this.runner = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: MINT, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
+    this.runner.scale.setScalar(1.4);
+    this.runner.visible = false;
+    this.object.add(this.runner);
+    this.center = from.clone().lerp(parts.to, 0.5);
+  }
+  pointAt(k) {
+    return BridgeGate.prototype.pointAt.call(this, k);
+  }
+  setRestored(v) {
+    this.progress = v ? 1 : 0;
+    this.apply(0);
+  }
+  apply(t) {
+    const k = this.progress;
+    for (const p of this.pieces) {
+      const local = THREE.MathUtils.clamp((k - p.order * 0.62) / 0.38, 0, 1);
+      const e = local >= 1 ? 1 : easeOutBack(local);
+      const bob = (1 - Math.min(1, local * 1.5)) * Math.sin(t * 1.2 + p.phase) * 0.14;
+      p.mesh.position.lerpVectors(p.scatterPos, p.rest.pos, e);
+      p.mesh.position.y += bob;
+      p.mesh.quaternion.slerpQuaternions(p.scatterQuat, p.rest.quat, Math.min(1, e));
+    }
+    const lit = THREE.MathUtils.smoothstep(k, 0.72, 1);
+    // 빛줄기는 판석이 다 맞춰진 뒤에 나타난다(흩어진 동안 허공에 떠 보이지 않게)
+    for (const [i, v] of this.veins.entries()) {
+      v.visible = lit > 0.01;
+      setBrightness(v, lit * (0.9 + Math.sin(t * 2.4 + i) * 0.12));
+    }
+    this.runner.visible = k > 0 && k < 1;
+    if (this.runner.visible) this.runner.position.copy(this.pointAt(k)).add(new THREE.Vector3(0, 0.6, 0));
+  }
+}
+
+/** 빛 봉오리(블렌더 Quest_Bud_*): 꽃잎 여섯 장이 오므려 닫혀 있다가 깨우면 활짝 열리고 바닥·빛줄기가 밝아진다 */
+export class BudPod {
+  static CLOSE = THREE.MathUtils.degToRad(70);
+  constructor(parts) {
+    this.object = new THREE.Group();
+    this.petals = parts.petals.map((mesh) => ({ mesh, rest: mesh.quaternion.clone() }));
+    this.glows = parts.glows;
+    this.floors = parts.floors ?? [];
+    this.veins = parts.veins;
+    this.core = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: '#FFE2C6', transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
+    this.core.position.y = 1.1;
+    this.object.add(this.core);
+    this.openness = 0;
+    this.awake = false;
+    this._q = new THREE.Quaternion();
+    this._x = new THREE.Vector3(1, 0, 0);
+  }
+  update(dt, t) {
+    const want = this.awake ? 1 : 0;
+    this.openness += (want - this.openness) * Math.min(1, dt * 1.2);
+    const o = this.openness;
+    const breathe = this.awake ? Math.sin(t * 0.9) * 0.025 : Math.sin(t * 1.6) * 0.02;
+    for (const [i, p] of this.petals.entries()) {
+      this._q.setFromAxisAngle(this._x, BudPod.CLOSE * (1 - o) + breathe * (i % 2 ? 1 : -1));
+      p.mesh.quaternion.copy(p.rest).multiply(this._q);
+    }
+    const sleepPulse = this.awake ? 0 : Math.max(0, Math.sin(t * 2.2)) * 0.18;
+    for (const g of this.glows) setBrightness(g, 0.35 + o * 0.75 + sleepPulse);
+    for (const f of this.floors) setBrightness(f, 0.92 + o * 0.2 + sleepPulse * 0.3);
+    for (const [i, v] of this.veins.entries()) setBrightness(v, 0.2 + o * (0.95 + Math.sin(t * 2 + i * 1.7) * 0.1));
+    this.core.material.opacity = 0.25 + o * 0.6 + sleepPulse;
+    this.core.scale.setScalar(1.0 + o * 1.8);
   }
 }
 

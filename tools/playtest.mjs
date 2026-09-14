@@ -133,6 +133,15 @@ await sleep(300);
 st = await S();
 ok('걷기·둘러보기 튜토리얼 완료', st.tutorial.done.includes('move') && st.tutorial.done.includes('look'), st.tutorial.done.join(','));
 
+// 점프: Space로 뛰어올랐다가 제자리에 내려앉는다
+const y0 = await ev(() => window.lumina.player.position.y);
+await page.keyboard.press('Space');
+await sleep(250);
+const yUp = await ev(() => window.lumina.player.position.y);
+await sleep(900);
+const yEnd = await ev(() => [window.lumina.player.position.y, !!window.lumina.player.air]);
+ok('Space 점프 후 착지', yUp > y0 + 0.4 && !yEnd[1] && Math.abs(yEnd[0] - y0) < 0.05, `${y0.toFixed(2)} → ${yUp.toFixed(2)} → ${yEnd[0].toFixed(2)}`);
+
 // Q01
 await act('workbench', 'workbench');
 ok('작업대 깨우기', (await S()).world.benchOpened);

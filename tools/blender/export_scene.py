@@ -364,6 +364,12 @@ log('JSON', json_path)
 if '--no-glb' not in FLAGS:
     baked = '--bake' in FLAGS
     if baked:
+        # 게임에서 움직이는 퀘스트 다리 조각은 주변에 그림자·반사광을 굽지 않는다
+        # (복원 전 판석이 흩어졌을 때 길 끝에 얼룩이 남지 않게)
+        for o in objs:
+            if o.name.startswith('Quest_Bridge'):
+                for attr in ('visible_shadow', 'visible_diffuse', 'visible_glossy', 'visible_transmission', 'visible_volume_scatter'):
+                    setattr(o, attr, False)
         baker.bake_vertex_colors([o for o in objs if o.type in ('MESH', 'CURVE')], scene, log,
                                  samples=int(os.environ.get('LUMINA_BAKE_SAMPLES', '128')))
         # 정점 색 = 블렌더 뷰 변환을 거친 표시 색

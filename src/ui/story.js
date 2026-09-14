@@ -617,6 +617,7 @@ export function createControlsHelp(root, actions) {
   const m = modalLayer(root, 'controls', 'ctlTitle');
   const rows = [
     ['WASD · 방향키', '걷기 (Shift 달리기)'],
+    ['Space', '점프 (낮은 턱 오르기)'],
     ['바닥 클릭', '그곳까지 걸어가기'],
     ['드래그', '시점 360° 돌리기'],
     ['휠', '가까이 · 멀리'],

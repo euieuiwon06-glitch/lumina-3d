@@ -543,7 +543,7 @@ export function reduce(prev, action) {
         break;
       }
       if (link[0] === 'overlook' && !W.bridgeRestored) {
-        error = '촉수 다리가 접혀 있어요. 등불 박자를 맞추면 길이 깨어나요.';
+        error = '판석 다리가 흩어져 있어요. 등불 박자를 맞추면 길이 이어져요.';
         break;
       }
       state.scene = link[0];

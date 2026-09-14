@@ -19,6 +19,7 @@ const texLoader = new THREE.TextureLoader();
 /** 블렌더 와트 → three 광도(cd). 점광원: L = Pρ/(4π²d²) 기준을 three(L = Iρ/(πd²))에 맞춘 값 */
 const W_TO_CD = 1 / (4 * Math.PI);
 const POOL = 8;
+const GLOW_MATERIALS = { M_QuestVeinMint: '#C4F7E4', M_QuestGlowPeach: '#FFE2C4' };
 
 // 장면별 보정(파노라마 밝기·환경광·조명). 검수 스크린샷을 기준 렌더와 비교해 조정
 export const LOOK = {
@@ -121,6 +122,15 @@ export class World {
         const display = !!meta.baked.display;
         const scale = display ? 1 : (meta.baked.scale ?? 4);
         o.material = mats.map((m) => {
+          // 가는 발광 선(퀘스트 빛줄기·고리)은 정점이 적어 구운 색이 어두워지므로 발광색을 그대로 쓴다
+          const glow = GLOW_MATERIALS[m.name];
+          if (glow) {
+            const b = new THREE.MeshBasicMaterial({ color: glow, toneMapped: false });
+            b.name = m.name;
+            b.userData.glow = new THREE.Color(glow);
+            m.dispose();
+            return b;
+          }
           const b = new THREE.MeshBasicMaterial({
             vertexColors: true,
             toneMapped: !display,
@@ -156,7 +166,8 @@ export class World {
       // 큰 불투명 메시만 카메라 충돌에 쓴다
       const opaque = mats.every((m) => !m.transparent);
       o.geometry.computeBoundingSphere();
-      if (opaque && o.geometry.boundingSphere.radius * Math.max(...o.getWorldScale(new THREE.Vector3()).toArray()) > 1.2) {
+      // 퀘스트로 움직이는 조각(Quest_*)은 카메라 충돌에서 뺀다
+      if (opaque && !o.name.startsWith('Quest_') && o.geometry.boundingSphere.radius * Math.max(...o.getWorldScale(new THREE.Vector3()).toArray()) > 1.2) {
         o.geometry.computeBoundsTree();
         this.colliders.push(o);
       }

@@ -13,17 +13,17 @@ export const NPCS = {
     role: '길 앞 주민',
     where: (s) => {
       if (!s.world.bridgeRestored) {
-        return rel(s, 'salgu', 'accepted') ? { scene: 'walkway', at: 'QUEST_빛복원_1', offset: [-2.2, 1.6] } : { scene: 'neighborhood', at: 'EXIT_촉수산책로', offset: [-4.5, 2.5] };
+        return rel(s, 'salgu', 'accepted') ? { scene: 'walkway', at: 'QUEST_다리앞', offset: [-1.2, 1.4] } : { scene: 'neighborhood', at: 'EXIT_촉수산책로', offset: [-4.5, 2.5] };
       }
       // 다리를 건너 친구 곁으로
-      return { scene: 'walkway', at: 'POI_씨앗탐색', offset: [3.4, 2.6] };
+      return { scene: 'walkway', at: 'POI_씨앗탐색', offset: [3.64, 2.1] };
     },
   },
   ribbon: {
     name: '리본',
     model: 'vine',
     role: '빛 수집가',
-    where: () => ({ scene: 'walkway', at: 'POI_씨앗탐색', offset: [2.2, -0.6] }),
+    where: () => ({ scene: 'walkway', at: 'POI_씨앗탐색', offset: [3.89, 0.2] }),
   },
   bora: {
     name: '보라',
@@ -78,16 +78,21 @@ export const SCENE_INFO = {
     start: 'ENTRY_주거구역',
     exits: [
       { at: 'ENTRY_주거구역', label: '캡슐 마을로 돌아가기', kind: 'door' },
-      { at: 'EXIT_전망대_항해정원', label: '꽃잎 승강대로 전망대 오르기', kind: 'lift', lockedUntil: (s) => (s.world.bridgeRestored ? null : '촉수 다리가 접혀 있어요. 등불 세 개의 박자를 맞추면 길이 깨어나요.') },
+      { at: 'EXIT_전망대_항해정원', label: '꽃잎 승강대로 전망대 오르기', kind: 'lift', lockedUntil: (s) => (s.world.bridgeRestored ? null : '판석 다리가 흩어져 있어요. 등불 세 개의 박자를 맞추면 길이 이어져요.') },
     ],
-    slots: [{ id: 'lantern', label: '첫 등불', at: 'QUEST_빛복원_1', offset: [0, 0], showWhen: () => true }],
+    slots: [{ id: 'lantern', label: '첫 등불', at: 'QUEST_다리앞', offset: [0, 0], showWhen: () => true }],
     // 박자가 어긋난 등불(조율 대상)과 복원 뒤 함께 켜지는 등불
     offbeat: ['QUEST_빛복원_2', 'QUEST_빛복원_3'],
     later: ['QUEST_빛복원_4', 'MARK_고정빛봉오리_3'],
-    // 접힌 다리: 이 선(z)보다 안쪽은 복원 전 걸을 수 없다
-    gate: { z: -18.2, path: ['QUEST_빛복원_1', 'QUEST_빛복원_2', 'QUEST_빛복원_4', 'MARK_고정빛봉오리_3', 'EXIT_전망대_항해정원'] },
-    // 교환 정원: 닫힌 봉오리와 반짝임 세 곳
-    bud: { at: 'POI_씨앗탐색', offset: [0, 0], glimmers: [[-3.2, 1.5], [1.6, -2.8], [-0.8, 3.4]] },
+    // 끊긴 판석 다리(블렌더 Quest_Bridge_*): from~to 사이 다리 칸은 복원 전 걸을 수 없다
+    gate: {
+      from: 'GATE_다리_시작',
+      to: 'GATE_다리_끝',
+      halfWidth: 2.4,
+      path: ['QUEST_다리앞', 'GATE_다리_시작', 'GATE_다리_끝', 'QUEST_빛복원_1', 'QUEST_빛복원_2', 'QUEST_빛복원_4', 'MARK_고정빛봉오리_3', 'EXIT_전망대_항해정원'],
+    },
+    // 교환 정원: 꽃잎 봉오리(블렌더 Quest_Bud_*)와 반짝임 세 곳. 닫혀 있는 동안 봉오리 안(closedRadius)은 들어갈 수 없다
+    bud: { at: 'POI_씨앗탐색', offset: [0, 0], closedRadius: 2.5, glimmers: [[2.32, -2.49], [-3.31, -0.76], [-2.32, 2.49]] },
   },
   overlook: {
     name: '항해 전망대',

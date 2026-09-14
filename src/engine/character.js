@@ -96,6 +96,7 @@ export class Character {
     this.model = tpl.scene.clone(true);
     const s = height / tpl.height;
     this.model.scale.setScalar(s);
+    this.baseScale = this.model.scale.clone();
     this.object.add(this.model);
     this.height = height;
 
@@ -253,6 +254,12 @@ export class Character {
     this.wave = 1.6;
   }
 
+  /** 점프 자세: air 0(땅) → 1(공중), landed가 참이면 착지 눌림 */
+  setAir(air, landed = false) {
+    this.airTarget = air;
+    if (landed) this.squash = 1;
+  }
+
   /** speed: 초당 이동 거리(m) */
   update(dt, speed = 0, time = performance.now() / 1000) {
     let d = this.targetYaw - this.yaw;
@@ -263,11 +270,15 @@ export class Character {
     const walking = Math.min(1, speed / 2.6);
     this.walkBlend += (walking - this.walkBlend) * Math.min(1, dt * 8);
     this.phase += dt * (2.2 + speed * 3.2);
-    const w = this.walkBlend;
+    this.airBlend = (this.airBlend ?? 0) + ((this.airTarget ?? 0) - (this.airBlend ?? 0)) * Math.min(1, dt * 14);
+    this.squash = Math.max(0, (this.squash ?? 0) - dt * 5);
+    const air = this.airBlend;
+    const w = this.walkBlend * (1 - air);
     const swing = Math.sin(this.phase);
 
     for (const L of this.legs) {
-      this._q.setFromAxisAngle(this._axisX, swing * 0.55 * w * L.side);
+      // 공중에서는 두 다리를 살짝 모아 접는다
+      this._q.setFromAxisAngle(this._axisX, swing * 0.55 * w * L.side - air * 0.45);
       L.o.quaternion.copy(L.rest).multiply(this._q);
     }
     this.wave = Math.max(0, this.wave - dt);
@@ -283,11 +294,15 @@ export class Character {
       // 서 있을 때는 숨 쉬듯 살짝
       angle += Math.sin(time * 2 + i) * 0.04 * (1 - w);
       this._q.setFromAxisAngle(this._axisX, angle);
-      A.o.quaternion.copy(A.rest).multiply(this._q);
+      // 공중에서는 팔을 양옆 위로 벌린다
+      if (air > 0.01) A.o.quaternion.copy(A.rest).multiply(this._q.multiply(new THREE.Quaternion().setFromAxisAngle(this._axisZ, -A.side * air * 0.9)));
+      else A.o.quaternion.copy(A.rest).multiply(this._q);
     });
-    // 몸 튕김·기울임
+    // 몸 튕김·기울임(착지 순간 살짝 눌렸다 펴짐)
     this.model.position.y = Math.abs(Math.sin(this.phase)) * 0.05 * w + Math.sin(time * 2.1 + this.phase * 0.1) * 0.008 * (1 - w);
     this.model.rotation.x = 0.08 * w;
+    const sq = Math.sin(this.squash * Math.PI) * 0.12;
+    this.model.scale.set(this.baseScale.x * (1 + sq * 0.6), this.baseScale.y * (1 - sq + air * 0.06), this.baseScale.z * (1 + sq * 0.6));
     for (const f of this.floaters) {
       f.o.position.y = f.rest.y + Math.sin(time * 2 + f.phase) * 0.04;
     }

@@ -71,7 +71,7 @@ test('Q02: 설치·조율·다리 복원 순서를 지키고, 등불 빛은 조�
   s = run(s, { type: 'retrieveLight', slot: 'lantern' }, { type: 'placeLight', slot: 'lantern' }, { type: 'tuned', assisted: true });
   assert.equal(slotAvailability(s, 'lantern').canRetrieve, false);
   const walkway = { ...s, scene: 'walkway' };
-  assert.match(fail(walkway, { type: 'travel', via: 'EXIT_전망대_항해정원' }), /접혀/);
+  assert.match(fail(walkway, { type: 'travel', via: 'EXIT_전망대_항해정원' }), /흩어져/);
   s = run(s, { type: 'restoreBridge' });
   assert.equal(s.quests.q02, 'completed');
   s = run(s, { type: 'claimReward', id: 'q02' });

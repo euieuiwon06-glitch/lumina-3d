@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { decodeGrid, findPath, groundAt, lineWalkable, makeGrid, nearestWalkable, pickGround, stepMove } from '../src/engine/walkgrid.js';
+import { airMove, decodeGrid, findPath, supportAt, groundAt, lineWalkable, makeGrid, nearestWalkable, pickGround, stepMove } from '../src/engine/walkgrid.js';
 
 // 블렌더 XY 0~10m 바닥, x 4~6 사이에 벽(y 0~8, 위쪽 8~10에 통로), 오른쪽 절반 0.3m 단상
 const spec = { x0: 0, y0: 0, cell: 0.25, w: 41, h: 41 };
@@ -50,6 +50,17 @@ test('격자 JSON(base64 Int16) 디코딩', () => {
   assert.equal(groundAt(g, 0, 0, 0), 0.12);
   assert.equal(groundAt(g, 1, 0, 0), null);
   assert.equal(groundAt(g, 0, -1, 2.4), 2.5);
+});
+
+test('점프: 걸어서는 못 오르는 0.6m 턱도 공중에서는 올라선다', () => {
+  const ledge = makeGrid({ x0: 0, y0: 0, cell: 0.25, w: 41, h: 9 }, (bx) => [bx > 5 ? 0.6 : 0]);
+  const pos = { x: 4.5, y: 0, z: -1 };
+  assert.ok(stepMove(ledge, pos, 1.5, 0).x < 5.2, '걸어서는 막힘');
+  assert.ok(airMove(ledge, pos, 0.3, 1.5, 0).x < 5.2, '낮게 뜨면 여전히 막힘');
+  const up = airMove(ledge, pos, 0.7, 1.5, 0);
+  assert.ok(up.x > 5.8);
+  assert.equal(up.support, 0.6);
+  assert.equal(supportAt(ledge, 7, -1, 2), 0.6);
 });
 
 function normalize(v) {

@@ -11,10 +11,10 @@ import { Character, loadCharacters } from './engine/character.js';
 import { CharacterPreview } from './engine/preview.js';
 import { GroundRing, LightProp, SongCrystal, Sparkles, glowTexture, preloadLightImages, starTexture } from './engine/props.js';
 import { clientToStage, mountStage, stage } from './engine/stage.js';
-import { BridgeGate, Glimmer, GuideWisp, Lantern, LightFlow, LightGate, PetalLift, SleepingBud } from './engine/story-props.js';
+import { BridgeGate, BudPod, Glimmer, GuideWisp, Lantern, LightFlow, LightGate, PetalLift, SlabBridge, SleepingBud } from './engine/story-props.js';
 import { ObjectiveMarker, PathTrail } from './engine/guide-fx.js';
 import { guideTarget } from './game/guide.js';
-import { findPath, floodReachable, groundAt, nearestReachable, nearestWalkable, pickGround, smoothGround, stepMove } from './engine/walkgrid.js';
+import { airMove, cellCenter, findPath, floodReachable, groundAt, nearestReachable, nearestWalkable, pickGround, smoothGround, stepMove, supportAt } from './engine/walkgrid.js';
 import { World } from './engine/world.js';
 import { BASES, BODY_COLORS, CHEST_COLORS, DISCOVERIES, MATERIALS, UNLOCKS, byId, lightName } from './game/catalog.js';
 import { BRANCH_LINES, dialogueFor } from './game/dialogue.js';
@@ -47,6 +47,8 @@ const RUN_SPEED = 5.2;
 const TALK_RADIUS = 2.4;
 const PANEL_CLOSE_RADIUS = 5;
 const SETTINGS_KEY = 'lumina-3d-settings';
+const JUMP_SPEED = 5.2;
+const GRAVITY = 16;
 const KEYMAP = { KeyW: 'f', ArrowUp: 'f', KeyS: 'b', ArrowDown: 'b', KeyA: 'l', ArrowLeft: 'l', KeyD: 'r', ArrowRight: 'r' };
 const V3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 
@@ -575,9 +577,10 @@ async function boot() {
   }
 
   // ------------------------------------------------------------------ 장면 구성
-  function snapToGrid(p, maxLift = 3) {
+  /** free: 지금 갈 수 있는 곳(reach)에 묶지 않는다(다리 건너편 주민·봉오리처럼 나중에 갈 곳) */
+  function snapToGrid(p, maxLift = 3, free = false) {
     if (!world.grid) return p.clone();
-    if (reach) {
+    if (reach && !free) {
       const r = nearestReachable(world.grid, reach, p.x, p.z, p.y - 0.2, 80);
       if (r) return V3(r.x, r.y, r.z);
     }
@@ -591,13 +594,13 @@ async function boot() {
     if (!m) return null;
     return V3(m.x + offset[0], m.y - (name.startsWith('QUEST_') ? 1.2 : name.startsWith('POI_') ? 0.8 : 0), m.z + offset[1]);
   }
-  function markerGround(name, offset = [0, 0]) {
+  function markerGround(name, offset = [0, 0], free = false) {
     const raw = markerRaw(name, offset);
     if (!raw) {
       console.warn('[LUMINA] 동선 표시 없음', world.id, name);
       return null;
     }
-    return snapToGrid(raw);
+    return snapToGrid(raw, 3, free);
   }
 
   function sceneCenter() {
@@ -631,21 +634,46 @@ async function boot() {
     return { pos, yaw: Math.atan2(dir.x, dir.z) };
   }
 
-  /** 접힌 다리: 복원 전에는 다리 너머 칸을 막는다(원본 격자는 보관) */
+  /**
+   * 퀘스트로 막힌 칸(원본 격자는 보관): 복원 전 판석 다리 칸, 깨우기 전 닫힌 봉오리 안
+   * 다리 틈은 실제로 끊겨 있어 다리 칸만 막으면 건너편 전체에 갈 수 없다
+   */
   function applyGate() {
     const g = world.grid;
     const info = SCENE_INFO[world.id];
-    if (!g || !info?.gate) return;
+    if (!g || !(info?.gate || info?.bud)) return;
     if (!gridOriginal) gridOriginal = g.layers.map((L) => L.slice());
-    const blocked = !state.world.bridgeRestored;
-    const jLimit = (-info.gate.z - g.y0) / g.cell;
+    const zones = [];
+    if (info.gate && !state.world.bridgeRestored) {
+      const a = markerRaw(info.gate.from);
+      const b = markerRaw(info.gate.to);
+      if (a && b) {
+        const dir = b.clone().sub(a).setY(0);
+        const len = dir.length();
+        dir.normalize();
+        zones.push((x, z) => {
+          const t = (x - a.x) * dir.x + (z - a.z) * dir.z;
+          const side = Math.abs((x - a.x) * -dir.z + (z - a.z) * dir.x);
+          return t > -0.1 && t < len + 0.1 && side <= info.gate.halfWidth;
+        });
+      }
+    }
+    if (info.bud && !state.world.budAwake) {
+      const c = markerRaw(info.bud.at, info.bud.offset);
+      const r = info.bud.closedRadius ?? 0;
+      if (c && r > 0) zones.push((x, z) => Math.hypot(x - c.x, z - c.z) <= r);
+    }
     g.layers.forEach((L, k) => {
       const src = gridOriginal[k];
       for (let j = 0; j < g.h; j++) {
-        const block = blocked && j > jLimit;
         for (let i = 0; i < g.w; i++) {
           const n = j * g.w + i;
-          L[n] = block ? -32768 : src[n];
+          if (!zones.length || src[n] === -32768) {
+            L[n] = src[n];
+            continue;
+          }
+          const p = cellCenter(g, i, j);
+          L[n] = zones.some((f) => f(p.x, p.z)) ? -32768 : src[n];
         }
       }
     });
@@ -703,7 +731,7 @@ async function boot() {
 
     // 주민
     for (const n of npcsInScene(state, id)) {
-      const pos = markerGround(n.spot.at, n.spot.offset);
+      const pos = markerGround(n.spot.at, n.spot.offset, true);
       if (!pos) continue;
       const char = new Character(n.model);
       char.position.copy(pos);
@@ -762,30 +790,45 @@ async function boot() {
       const raw = markerRaw(name);
       if (!raw) continue;
       const lamp = new Lantern();
-      lamp.object.position.copy(snapToGrid(raw));
+      lamp.object.position.copy(snapToGrid(raw, 3, true));
       dyn.add(lamp.object);
       props.lanterns.set(name, lamp);
     }
     if (info.gate) {
       const pts = info.gate.path.map((n) => markerRaw(n)).filter(Boolean);
+      const byPrefix = (p) => [...world.meshByName.entries()].filter(([k]) => k.startsWith(p)).map(([, m]) => m);
+      const slabs = byPrefix('Quest_Bridge_Slab');
+      const from = markerRaw(info.gate.from ?? '');
+      const to = markerRaw(info.gate.to ?? '');
       if (pts.length > 1) {
-        const gate = new BridgeGate(pts);
+        const gate = slabs.length && from && to
+          ? new SlabBridge(pts, { from, to, slabs, frame: [...byPrefix('Quest_Bridge_Curb'), ...byPrefix('Quest_Bridge_Post')], veins: byPrefix('Quest_Bridge_Vein') })
+          : new BridgeGate(pts);
         dyn.add(gate.object);
         props.gate = gate;
+        gate.setRestored(state.world.bridgeRestored);
       }
       const lanternSpot = props.slots.get('lantern');
       if (lanternSpot) addSpot({ kind: 'tune', id: 'tune', name: '어긋난 등불', pos: lanternSpot.pos, radius: 3, lift: 2.2 });
     }
     if (info.bud) {
-      const pos = markerGround(info.bud.at, info.bud.offset);
+      const pos = markerGround(info.bud.at, info.bud.offset, true);
       if (pos) {
-        const bud = new SleepingBud();
-        bud.object.position.copy(pos);
+        const byPrefix = (p) => [...world.meshByName.entries()].filter(([k]) => k.startsWith(p)).map(([, m]) => m);
+        const petals = byPrefix('Quest_Bud_Petal');
+        const bud = petals.length
+          ? new BudPod({ petals, glows: byPrefix('Quest_Bud_Glow'), floors: byPrefix('Quest_Bud_Floor'), veins: byPrefix('Quest_BudVein') })
+          : new SleepingBud();
+        const center = markerRaw(info.bud.at, info.bud.offset);
+        bud.object.position.copy(petals.length && center ? V3(center.x, pos.y, center.z) : pos);
+        bud.awake = state.world.budAwake;
+        if (bud.awake) bud.openness = 1;
         dyn.add(bud.object);
         props.bud = { bud, pos };
-        addSpot({ kind: 'bud', id: 'bud', name: '닫힌 빛 봉오리', pos, radius: 2.4, lift: 1.4 });
+        // 닫힌 동안 안쪽 칸이 막혀 있으므로 바깥에서 닿는 거리
+        addSpot({ kind: 'bud', id: 'bud', name: '닫힌 빛 봉오리', pos, radius: (info.bud.closedRadius ?? 0) + 1.3, lift: 3.6 });
         info.bud.glimmers.forEach((off, i) => {
-          const gp = snapToGrid(pos.clone().add(V3(off[0], 0, off[1])));
+          const gp = snapToGrid(pos.clone().add(V3(off[0], 0, off[1])), 3, true);
           const g = new Glimmer('#B9E6D3');
           g.object.position.copy(gp).add(V3(0, 0.6, 0));
           dyn.add(g.object);
@@ -868,6 +911,7 @@ async function boot() {
     prompt.update(null);
     keys.clear();
     path = null;
+    if (actors.player) actors.player.air = null;
     refresh();
     const id = state.scene;
     const info = SCENE_INFO[id];
@@ -1168,6 +1212,9 @@ async function boot() {
         break;
       case 'bud':
         if (dispatch({ type: 'wakeBud' })) {
+          // 꽃잎이 열리면 봉오리 안으로 들어갈 수 있다
+          applyGate();
+          computeReach();
           sparkles.burst(tp.clone().add(V3(0, 1, 0)), 30, settings.reducedMotion);
           chime(783.99, 0.9, 0.12);
           setTimeout(() => talkTo('ribbon'), 1400);
@@ -1335,7 +1382,7 @@ async function boot() {
     let t = 0;
     const lamps = [...SCENE_INFO.walkway.offbeat, ...SCENE_INFO.walkway.later].map((n) => props.lanterns.get(n)).filter(Boolean);
     const salgu = actors.npcs.find((n) => n.id === 'salgu');
-    const look = gate.pointAt(0.35);
+    const look = gate.center ?? gate.pointAt(0.35);
     follow.autoYaw = Math.atan2(actors.player.position.x - look.x, actors.player.position.z - look.z);
     hint.set(null);
     cinematic = {
@@ -1361,7 +1408,7 @@ async function boot() {
         computeReach();
         view.mode = 'play';
         refresh();
-        banner.show('길이 깨어났어요', '촉수 다리가 펼쳐졌어요', '살구가 먼저 건너가 기다려요. 직접 걸어서 건너 보세요.', 4800);
+        banner.show('길이 깨어났어요', '흩어진 판석 다리가 이어졌어요', '살구가 먼저 건너가 기다려요. 직접 걸어서 건너 보세요.', 4800);
         if (salgu) {
           const ahead = snapToGrid(gate.pointAt(0.3));
           npcWalk(salgu, ahead, () => {
@@ -1645,10 +1692,18 @@ async function boot() {
     const gate = props.gate;
     // 첫 등불 → 접힌 다리 → 꺼져 가는 산책로 등불을 차례로 비춘다
     const p0 = gate ? gate.pointAt(0) : V3();
-    const a = p0.clone().add(V3(-7, 3.2, 10));
-    const b = p0.clone().add(V3(-3.5, 2.2, 5.5));
-    const look = gate ? gate.pointAt(0.12).add(V3(0, 0.8, 0)) : V3();
-    const lines = ['빛들의 박자가 어긋나면서 해파리의 항해가 멈췄어요.', '산책로의 등불은 꺼지고, 촉수 다리는 접혀 이웃들이 만나지 못해요.', `작은 빛 ${state.profile.name}이(가) 제작실에서 깨어나요.`];
+    let a = p0.clone().add(V3(-7, 3.2, 10));
+    let b = p0.clone().add(V3(-3.5, 2.2, 5.5));
+    let look = gate ? gate.pointAt(0.12).add(V3(0, 0.8, 0)) : V3();
+    if (gate?.center) {
+      // 흩어진 판석 다리를 등불 쪽 비스듬한 위에서 내려다본다
+      const back = p0.clone().sub(gate.center).setY(0).normalize();
+      const side = V3(-back.z, 0, back.x);
+      a = gate.center.clone().addScaledVector(back, 12).addScaledVector(side, 4).add(V3(0, 5, 0));
+      b = gate.center.clone().addScaledVector(back, 8).addScaledVector(side, 2.5).add(V3(0, 3.2, 0));
+      look = gate.center.clone().add(V3(0, -0.8, 0));
+    }
+    const lines = ['빛들의 박자가 어긋나면서 해파리의 항해가 멈췄어요.', '산책로의 등불은 꺼지고, 판석 다리는 흩어져 이웃들이 만나지 못해요.', `작은 빛 ${state.profile.name}이(가) 제작실에서 깨어나요.`];
     const dur = settings.reducedMotion ? 4 : 9;
     let t = 0;
     let shown = -1;
@@ -1786,6 +1841,36 @@ async function boot() {
   scene3.add(moveMarker.mesh);
   let moveMarkerLife = 0;
 
+  /** Space 점프: 약 0.85m 높이. 공중에서는 발보다 낮은 칸으로만 나아가 낮은 턱에 올라설 수 있다 */
+  function startJump() {
+    const player = actors.player;
+    if (!player || player.air || cinematic) return;
+    path = null;
+    pathDone = null;
+    const y = player.position.y;
+    player.air = { y, vy: JUMP_SPEED };
+    player.setAir(1);
+  }
+
+  function updateJump(player, grid, dt) {
+    const air = player.air;
+    if (!air) return;
+    air.vy -= GRAVITY * dt;
+    air.y += air.vy * dt;
+    const support = grid ? supportAt(grid, player.position.x, player.position.z, air.y) : player.groundY;
+    const floor = support ?? player.groundY ?? air.y;
+    if (air.vy < 0 && air.y <= floor) {
+      player.position.y = floor;
+      player.groundY = floor;
+      player.air = null;
+      player.setAir(0, true);
+      commitPosition();
+      return;
+    }
+    player.position.y = air.y;
+    if (air.vy < 0) player.setAir(0.6);
+  }
+
   function updatePlayer(dt) {
     const player = actors.player;
     const grid = world.grid;
@@ -1795,6 +1880,11 @@ async function boot() {
     const lockedPanel = view.panel?.kind === 'craft' || view.panel?.kind === 'tune';
     if (lockedPanel) {
       path = null;
+      if (player.air) {
+        player.air = null;
+        player.position.y = player.groundY ?? player.position.y;
+        player.setAir(0);
+      }
       player.update(dt, 0, time);
       return;
     }
@@ -1854,6 +1944,10 @@ async function boot() {
         const g = groundAt(grid, player.position.x, player.position.z, prevY, 0.6);
         player.groundY = g ?? prevY + (path[0].y - prevY) * Math.min(1, step / Math.max(0.01, Math.hypot(path[0].x - before.x, path[0].z - before.z)));
         player.position.y += (player.groundY - player.position.y) * Math.min(1, dt * 18);
+      } else if (grid && player.air) {
+        const res = airMove(grid, before, player.air.y, dir.x * step, dir.z * step);
+        player.position.x = res.x;
+        player.position.z = res.z;
       } else if (grid) {
         const gy0 = player.groundY ?? before.y;
         const res = stepMove(grid, { x: before.x, y: gy0, z: before.z }, dir.x * step, dir.z * step);
@@ -1869,7 +1963,8 @@ async function boot() {
       if (movedDistance > 2) dispatchTutorial('move');
       if (moved > 1e-3) player.setYaw(Math.atan2(dir.x, dir.z));
     }
-    player.update(dt, speed, time);
+    updateJump(player, grid, dt);
+    player.update(dt, player.air ? 0 : speed, time);
     const walking = speed > 0.2;
     if (wasWalking && !walking) commitPosition();
     wasWalking = walking;
@@ -2069,6 +2164,13 @@ async function boot() {
       return;
     }
     if (e.key === 'Shift') run = true;
+    if (e.code === 'Space') {
+      // 대화·패널이 열려 있으면 버튼 입력을 그대로 둔다
+      if (view.panel || dialogue.open) return;
+      e.preventDefault();
+      if (!e.repeat) startJump();
+      return;
+    }
     if (e.code === 'KeyE' && !e.repeat) {
       e.preventDefault();
       actions.interact();

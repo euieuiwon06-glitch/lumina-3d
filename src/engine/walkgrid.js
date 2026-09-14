@@ -117,6 +117,38 @@ export function stepMove(grid, pos, dx, dz) {
   return { ...cur, moved };
 }
 
+/** 공중 발 높이 feetY 아래에서 받쳐 줄 지면(발보다 조금 높은 턱까지 허용, 너무 깊은 낭떠러지는 제외). 없으면 null */
+export function supportAt(grid, x, z, feetY, { up = 0.12, down = 3 } = {}) {
+  const { i, j } = cellOf(grid, x, z);
+  let best = null;
+  for (const h of heightsAt(grid, i, j)) {
+    if (h <= feetY + up && h >= feetY - down && (best === null || h > best)) best = h;
+  }
+  return best;
+}
+
+/**
+ * 점프 중 수평 이동: 발 높이보다 낮은(또는 거의 같은) 칸으로만 나아간다.
+ * 반환 { x, z, support }
+ */
+export function airMove(grid, pos, feetY, dx, dz) {
+  const tryAt = (x, z) => {
+    const s = supportAt(grid, x, z, feetY);
+    return s === null ? null : { x, z, support: s };
+  };
+  const len = Math.hypot(dx, dz);
+  const n = Math.max(1, Math.ceil(len / (grid.cell * 0.5)));
+  let cur = { x: pos.x, z: pos.z, support: supportAt(grid, pos.x, pos.z, feetY) };
+  for (let s = 0; s < n; s++) {
+    const sx = dx / n;
+    const sz = dz / n;
+    const next = tryAt(cur.x + sx, cur.z + sz) ?? (Math.abs(sx) > 1e-6 ? tryAt(cur.x + sx, cur.z) : null) ?? (Math.abs(sz) > 1e-6 ? tryAt(cur.x, cur.z + sz) : null);
+    if (!next) break;
+    cur = next;
+  }
+  return cur;
+}
+
 /** 점에서 가장 가까운 걸을 수 있는 지점(반경 칸 수 안) */
 export function nearestWalkable(grid, x, z, y = null, radius = 40) {
   const c = cellOf(grid, x, z);
