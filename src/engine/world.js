@@ -115,7 +115,28 @@ export class World {
       if (!o.isMesh) return;
       this.meshByName.set(o.name, o);
       const mats = Array.isArray(o.material) ? o.material : [o.material];
-      for (const m of mats) {
+      if (meta.baked) {
+        // Cycles로 조명·발광·무늬를 굽고 블렌더 색 관리(AgX Punchy·노출)까지 적용한 표시 색:
+        // 조명·톤매핑 없이 그대로 보여 주면 원본 렌더와 같은 색이 된다
+        const display = !!meta.baked.display;
+        const scale = display ? 1 : (meta.baked.scale ?? 4);
+        o.material = mats.map((m) => {
+          const b = new THREE.MeshBasicMaterial({
+            vertexColors: true,
+            toneMapped: !display,
+            color: new THREE.Color(scale, scale, scale),
+            transparent: m.transparent || m.opacity < 1,
+            opacity: m.opacity,
+            side: m.transparent || m.opacity < 1 ? THREE.DoubleSide : m.side,
+            depthWrite: !(m.transparent || m.opacity < 1),
+          });
+          b.name = m.name;
+          m.dispose();
+          return b;
+        });
+        if (o.material.length === 1) o.material = o.material[0];
+      }
+      for (const m of meta.baked ? [] : mats) {
         // 원본은 AgX 'Punchy' 룩(채도·대비 강조)으로 렌더됐다. three의 AgX에는 룩이 없어 재질 채도로 맞춘다
         if (m.color && !m.userData.graded) {
           const hsl = {};

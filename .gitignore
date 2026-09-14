@@ -3,3 +3,10 @@ dist/
 tools/screens/
 .impeccable/
 *.log
+
+__pycache__/
+tools/bake-log.txt
+tools/export-log.txt
+tools/export-grid-log.txt
+tools/dev.log
+tools/export-*-log.txt

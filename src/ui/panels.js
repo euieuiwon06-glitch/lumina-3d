@@ -1,12 +1,10 @@
 // 대상 근처에 뜨는 작은 패널들: 상호작용 안내, 빛 놓기, 빛 작업대, 결정의 노래, 주민 말풍선.
 // 앵커는 3D 위치를 화면에 투영한 무대 좌표({ x, y, visible })다.
-import { MOTIONS, SOFT_BRIGHTNESS, byId, lightName } from '../game/catalog.js';
-import { SLOT_QUEST, lightAt } from '../game/quests.js';
-import { canDepart, hasUnlock, slotAvailability } from '../game/state.js';
+import { COLORS, MOTIONS, SOFT_BRIGHTNESS, byId, lightName } from '../game/catalog.js';
+import { carriedLights, lightAt } from '../game/quests.js';
+import { craftCost, craftOptions, slotAvailability } from '../game/state.js';
 import { stage } from '../engine/stage.js';
 import { artIcon, h, icon } from './dom.js';
-
-const DEST_NAME = { ice: '얼음 성운', solar: '태양 정원', twilight: '황혼 합류지', overlook: '항해 전망대' };
 
 function place(el, x, y, { w = 0, anchor = 'center' } = {}) {
   let left = anchor === 'center' ? x - w / 2 : x;
@@ -23,7 +21,9 @@ function placeBeside(el, anchor, player) {
   const preferLeft = player ? player.x >= anchor.x : anchor.x > stage.W / 2;
   let x = preferLeft ? Math.min(anchor.x, player?.x ?? anchor.x) - w - gap : Math.max(anchor.x, player?.x ?? anchor.x) + gap;
   if (x < 16 || x + w > stage.W - 16) x = preferLeft ? Math.max(anchor.x, player?.x ?? anchor.x) + gap : Math.min(anchor.x, player?.x ?? anchor.x) - w - gap;
-  x = Math.max(16, Math.min(stage.W - w - 16, x));
+  // 왼쪽 위 목표 카드(약 380px 너비) 영역은 피한다
+  const leftGuard = anchor.y - hgt * 0.5 < 380 ? 380 : 16;
+  x = Math.max(leftGuard, Math.min(stage.W - w - 16, x));
   const y = Math.max(150, Math.min(stage.H - hgt - 150, anchor.y - hgt * 0.5));
   el.style.left = `${x}px`;
   el.style.top = `${y}px`;
@@ -99,11 +99,10 @@ export function createSlotPanel(root, actions) {
   const name = h('strong', { class: 'sp-name', id: 'slotPanelTitle' });
   const where = h('span', { class: 'sp-where' });
   const props = h('p', { class: 'sp-placed' });
-  const hint = h('p', { class: 'sp-hint' }, icon('wave'), h('span', {}, '움직임·밝기는 빛 제작실 작업대에서 골라요'));
+  const hint = h('p', { class: 'sp-hint' }, icon('wave'), h('span', {}, '놓기 전 자리에 미리 보여요. 거두면 다시 들고 다녀요.'));
   const reason = h('p', { class: 'sp-reason' });
   const placeBtn = h('button', { class: 'btn btn-primary', type: 'button', onClick: () => actions.place() }, icon('check', 'btn-check'), '놓기');
   const retrieveBtn = h('button', { class: 'btn btn-quiet', type: 'button', onClick: () => actions.retrieve() }, '거두기');
-  const departBtn = h('button', { class: 'btn btn-primary', type: 'button', onClick: () => actions.requestDepart() }, icon('jelly'), h('span', {}, '출항하기'));
   const closeBtn = h('button', { class: 'icon-btn sp-close', type: 'button', 'aria-label': '패널 닫기', onClick: () => actions.closePanel() }, icon('close'));
   const el = h(
     'section',
@@ -112,7 +111,7 @@ export function createSlotPanel(root, actions) {
     props,
     hint,
     reason,
-    h('div', { class: 'sp-actions' }, retrieveBtn, departBtn, placeBtn),
+    h('div', { class: 'sp-actions' }, retrieveBtn, placeBtn),
   );
   el.hidden = true;
   root.append(el);
@@ -127,38 +126,35 @@ export function createSlotPanel(root, actions) {
       el.hidden = false;
       const av = slotAvailability(state, slot.id);
       const placed = lightAt(state, slot.id);
-      const L = placed ?? state.draft;
-      where.textContent = `${slot.label} · 씨앗 ${state.materials.seed}개`;
-      name.textContent = lightName(L);
-      props.textContent = `${byId(MOTIONS, L.motion).label} · 밝기 ${L.brightness}`;
+      const carried = carriedLights(state).filter((l) => l.origin === 'crafted');
+      const L = placed ?? carried[carried.length - 1] ?? null;
+      where.textContent = slot.label;
+      name.textContent = L ? lightName(L) : '들고 있는 빛 없음';
+      props.textContent = L ? `${byId(MOTIONS, L.motion).label} · 밝기 ${L.brightness}` : '';
+      props.hidden = !L;
       hint.hidden = !av.canPlace;
-
       placeBtn.hidden = !!placed;
       placeBtn.disabled = !av.canPlace;
       retrieveBtn.hidden = !placed;
       retrieveBtn.disabled = !av.canRetrieve;
-
-      const questActive = ['active', 'completed', 'claimed'].includes(state.quests[SLOT_QUEST.helm]);
-      const dep = canDepart(state);
-      departBtn.hidden = !(slot.helm && placed && questActive);
-      departBtn.disabled = !dep.ok;
-      departBtn.lastChild.textContent = dep.to ? `${DEST_NAME[dep.to]}으로 출항` : '출항하기';
-
-      let msg = av.reason;
-      if (!departBtn.hidden) msg = dep.ok ? `빛이 ${DEST_NAME[dep.to]} 쪽으로 항로를 틀었어요.` : dep.reason;
-      if (placed && !av.canRetrieve && departBtn.hidden) msg = av.reason;
-      reason.textContent = msg ?? '';
-      reason.hidden = !msg;
+      reason.textContent = av.reason ?? '';
+      reason.hidden = !av.reason;
       if (anchor) placeBeside(el, anchor, player);
     },
   };
 }
 
-// ------------------------------------------------------------------ 빛 작업대(움직임·밝기)
+// ------------------------------------------------------------------ 둥근 작업대(색·움직임·밝기, 빚기)
 
 export function createCraftPanel(root, actions) {
   const name = h('strong', { class: 'sp-name', id: 'craftTitle' });
-  const where = h('span', { class: 'sp-where' }, '빛 작업대 · 도크와 팔레트로 형태·색도 바꿔요');
+  const where = h('span', { class: 'sp-where' });
+  const colorRow = h('div', { class: 'sp-motions', role: 'radiogroup', 'aria-label': '빛의 색' });
+  const colorBtns = COLORS.map((c) => {
+    const b = h('button', { class: 'chip creator-chip', type: 'button', role: 'radio', onClick: () => actions.setDraft('color', c.id) }, h('span', { class: 'creator-sw', style: { '--sw': c.hex }, 'aria-hidden': 'true' }), c.label);
+    colorRow.append(b);
+    return { c, b };
+  });
   const motionRow = h('div', { class: 'sp-motions', role: 'radiogroup', 'aria-label': '움직임' });
   const motionBtns = MOTIONS.map((m) => {
     const b = h('button', { class: 'chip', type: 'button', role: 'radio', onClick: () => actions.setDraft('motion', m.id) }, m.label);
@@ -167,25 +163,30 @@ export function createCraftPanel(root, actions) {
   });
   const lockedNote = h('p', { class: 'sp-reason' });
   const brightValue = h('output', { class: 'sp-bright-value', for: 'brightness' });
-  const bright = h('input', {
-    id: 'brightness',
-    class: 'sp-bright',
-    type: 'range',
-    min: '20',
-    max: '100',
-    step: '5',
-    onInput: (e) => actions.setDraft('brightness', Number(e.target.value)),
-  });
+  const bright = h('input', { id: 'brightness', class: 'sp-bright', type: 'range', min: '20', max: '100', step: '5', onInput: (e) => actions.setDraft('brightness', Number(e.target.value)) });
   const brightRow = h('label', { class: 'sp-bright-row', for: 'brightness' }, h('span', {}, '밝기'), bright, brightValue);
+  const brightNote = h('p', { class: 'sp-reason' }, '밝기 조절은 캡슐 마을의 포근에게 배울 수 있어요.');
   const closeBtn = h('button', { class: 'icon-btn sp-close', type: 'button', 'aria-label': '작업대 닫기', onClick: () => actions.closePanel() }, icon('close'));
-  const doneBtn = h('button', { class: 'btn btn-primary', type: 'button', onClick: () => actions.closePanel() }, icon('check', 'btn-check'), '다 빚었어요');
+  const craftBtn = h('button', { class: 'btn btn-primary', type: 'button', onClick: () => actions.craft() });
+  const reshapeBtn = h('button', { class: 'btn btn-quiet', type: 'button', onClick: () => actions.reshape(), title: '들고 있는 빛을 지금 고른 색·움직임으로 다시 빚어요(재료 없음)' }, '다시 빚기');
+  const status = h('p', { class: 'sp-hint' }, icon('sparkle'), h('span', {}));
   const el = h(
     'section',
     { class: 'slot-panel craft-panel hud-panel', role: 'group', 'aria-labelledby': 'craftTitle' },
     h('div', { class: 'sp-head' }, h('div', {}, name, where), closeBtn),
-    h('div', { class: 'sp-editor' }, h('div', { class: 'sp-motion-head' }, icon('wave'), h('span', {}, '움직임')), motionRow, lockedNote, brightRow),
-    h('p', { class: 'sp-hint' }, icon('sparkle'), h('span', {}, '빚은 빛은 씨앗을 들고 설치 지점에서 놓아요')),
-    h('div', { class: 'sp-actions' }, doneBtn),
+    h(
+      'div',
+      { class: 'sp-editor' },
+      h('div', { class: 'sp-motion-head' }, icon('sparkle'), h('span', {}, '색')),
+      colorRow,
+      h('div', { class: 'sp-motion-head' }, icon('wave'), h('span', {}, '움직임')),
+      motionRow,
+      lockedNote,
+      brightRow,
+      brightNote,
+    ),
+    status,
+    h('div', { class: 'sp-actions' }, reshapeBtn, craftBtn),
   );
   el.hidden = true;
   root.append(el);
@@ -195,20 +196,37 @@ export function createCraftPanel(root, actions) {
       el.hidden = !open;
       if (!open) return;
       const d = state.draft;
+      const opt = craftOptions(state);
       name.textContent = lightName(d);
-      let lockedCount = 0;
+      where.textContent = state.world.firstCrafted ? `둥근 작업대 · 별빛 씨앗 ${state.materials.seed}개` : '둥근 작업대 · 첫 빛은 재료 없이 빚어요';
+      for (const { c, b } of colorBtns) {
+        const on = d.color === c.id;
+        b.hidden = !opt.colors.includes(c.id);
+        b.setAttribute('aria-checked', String(on));
+        b.classList.toggle('is-selected', on);
+      }
+      let hiddenMotions = 0;
       for (const { m, b } of motionBtns) {
-        const unlocked = hasUnlock(state, m.unlock);
-        b.hidden = !unlocked;
-        if (!unlocked) lockedCount++;
+        const ok = opt.motions.includes(m.id);
+        b.hidden = !ok;
+        if (!ok) hiddenMotions++;
         b.setAttribute('aria-checked', String(d.motion === m.id));
         b.classList.toggle('is-selected', d.motion === m.id);
       }
-      lockedNote.hidden = !lockedCount;
-      lockedNote.textContent = '새로운 움직임은 먼 곳의 현상에서 기억으로 얻어요.';
+      lockedNote.hidden = !hiddenMotions;
+      lockedNote.textContent = state.world.firstCrafted ? '새로운 움직임은 먼 곳의 현상에서 기억으로 얻어요.' : '첫 빛은 숨 쉬듯 맥동해요. 다른 움직임은 첫 빛을 완성하면 열려요.';
+      brightRow.hidden = !opt.brightness;
+      brightNote.hidden = opt.brightness;
       if (document.activeElement !== bright) bright.value = String(d.brightness);
       brightValue.textContent = String(d.brightness);
       brightRow.classList.toggle('is-soft', d.brightness <= SOFT_BRIGHTNESS);
+      const cost = craftCost(state);
+      craftBtn.replaceChildren(icon('check', 'btn-check'), state.world.firstCrafted ? `빛 빚기 (씨앗 ${cost})` : '첫 빛 완성하기');
+      craftBtn.disabled = state.materials.seed < cost;
+      craftBtn.title = craftBtn.disabled ? '별빛 씨앗이 필요해요' : '';
+      const carried = carriedLights(state).filter((l) => l.origin === 'crafted');
+      reshapeBtn.hidden = !carried.length;
+      status.lastChild.textContent = carried.length ? `들고 있는 빛 ${carried.length}개 · 다시 빚기는 재료가 들지 않아요` : '빚은 빛은 들고 다니다가 설치 지점에 놓아요';
       if (anchor) placeBeside(el, anchor, player);
     },
   };

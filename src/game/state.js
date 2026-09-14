@@ -1,23 +1,27 @@
-// 게임 상태(저장 대상)와 행동. 표시 상태(열린 패널, 카메라, 애니메이션)는 여기 두지 않는다.
-import { COLORS, COOL_LIMIT, DISCOVERIES, FORMS, MOTIONS, WARM_LIMIT, byId, colorTemp } from './catalog.js';
-import { DESTINATIONS, QUESTS, QUEST_ORDER, SLOT_QUEST, STATUS, evaluateQuests, isDestination, lightAt } from './quests.js';
+// 게임 상태(저장 대상)와 행동. 표시 상태(열린 패널, 카메라, 연출)는 여기 두지 않는다.
+import { ACCESSORIES, BASES, BODY_COLORS, CHEST_COLORS, COLORS, DISCOVERIES, FORMS, MOTIONS, ROUTES, SYMBOLS, byId, cleanName, createProfile } from './catalog.js';
+import { DESTINATIONS, QUESTS, QUEST_ORDER, SLOT_QUEST, STATUS, carriedLights, evaluateQuests, isDestination, lightAt, lightById } from './quests.js';
 
-export const SAVE_VERSION = 1;
-export const SAVE_KEY = 'lumina-3d-save';
-export const SLOT_IDS = ['shelter', 'path2', 'helm', 'path3'];
+export const SAVE_VERSION = 2;
+export const SAVE_KEY = 'lumina-3d-save-v2';
+export const LEGACY_KEYS = ['lumina-3d-save'];
+export const SLOT_IDS = ['lantern', 'shelter'];
 export const SCENES = ['workshop', 'neighborhood', 'nursery', 'walkway', 'overlook', 'ice', 'solar', 'twilight'];
 export const START_SCENE = 'workshop';
+export const NPC_IDS = ['salgu', 'ribbon', 'bora', 'pogeun'];
+export const RELATIONS = ['stranger', 'met', 'accepted', 'progress', 'resolved', 'companion'];
+export const TUTORIAL_STEPS = ['move', 'look', 'bench', 'craft', 'place', 'tune', 'trade', 'voyage'];
 
-/** 걸어서 이어진 장면. [장면, 출구 표시] → [도착 장면, 도착 표시] */
+/** 걸어서 이어진 장면. [장면:출구 표시] → [도착 장면, 도착 표시, 이동 방식] */
 export const LINKS = {
-  'workshop:ENTRY_정원_교환광장': ['neighborhood', 'ENTRY_정원_교환광장'],
-  'neighborhood:ENTRY_정원_교환광장': ['workshop', 'ENTRY_정원_교환광장'],
-  'workshop:ENTRY_씨앗온실': ['nursery', 'EXIT_빛제작실'],
-  'nursery:EXIT_빛제작실': ['workshop', 'ENTRY_씨앗온실'],
-  'neighborhood:EXIT_촉수산책로': ['walkway', 'ENTRY_주거구역'],
-  'walkway:ENTRY_주거구역': ['neighborhood', 'EXIT_촉수산책로'],
-  'walkway:EXIT_전망대_항해정원': ['overlook', 'ENTRY_촉수산책로'],
-  'overlook:ENTRY_촉수산책로': ['walkway', 'EXIT_전망대_항해정원'],
+  'workshop:ENTRY_정원_교환광장': ['neighborhood', 'ENTRY_정원_교환광장', 'door'],
+  'neighborhood:ENTRY_정원_교환광장': ['workshop', 'ENTRY_정원_교환광장', 'door'],
+  'workshop:ENTRY_씨앗온실': ['nursery', 'EXIT_빛제작실', 'door'],
+  'nursery:EXIT_빛제작실': ['workshop', 'ENTRY_씨앗온실', 'door'],
+  'neighborhood:EXIT_촉수산책로': ['walkway', 'ENTRY_주거구역', 'door'],
+  'walkway:ENTRY_주거구역': ['neighborhood', 'EXIT_촉수산책로', 'door'],
+  'walkway:EXIT_전망대_항해정원': ['overlook', 'ENTRY_촉수산책로', 'lift'],
+  'overlook:ENTRY_촉수산책로': ['walkway', 'EXIT_전망대_항해정원', 'lift'],
 };
 
 /** 항해 도착·귀환 지점 */
@@ -28,23 +32,45 @@ export const DOCKS = {
   twilight: 'ENTRY_외부항해_도착테라스',
 };
 
+function createWorld() {
+  return {
+    benchOpened: false,
+    firstCrafted: false,
+    tuned: false,
+    tunedAssisted: false,
+    bridgeRestored: false,
+    budAwake: false,
+    traded: false,
+    woven: false,
+    organFed: false,
+    route: null,
+    arrived: false,
+    chapterDone: false,
+    openingSeen: false,
+  };
+}
+
 export function createInitialState() {
   const state = {
     version: SAVE_VERSION,
+    profile: createProfile(),
     scene: START_SCENE,
-    arrival: null, // 다음 장면 진입 시 설 표시 이름(없으면 저장 위치 또는 기본 시작점)
+    arrival: null,
     positions: Object.fromEntries(SCENES.map((s) => [s, null])),
     materials: { seed: 0, shard: 0 },
     unlocks: [],
     lights: [],
     nextLightId: 1,
-    slots: { shelter: null, path2: null, helm: null, path3: null },
-    quests: { shelter: 'locked', apricot: 'locked', voyage: 'locked', song: 'locked', finale: 'locked' },
-    ledger: [], // 지급 완료된 보상 키. 같은 키는 두 번 지급하지 않는다
-    draft: { form: 'flower', color: 'apricot', motion: 'float', brightness: 80 },
+    slots: { lantern: null, shelter: null },
+    quests: Object.fromEntries(QUEST_ORDER.map((id) => [id, 'locked'])),
+    relations: Object.fromEntries(NPC_IDS.map((id) => [id, 'stranger'])),
+    tutorial: { done: [] },
+    world: createWorld(),
+    ledger: [],
+    draft: { form: 'orb', color: 'apricot', motion: 'pulse', brightness: 80 },
     voyage: { visited: { ice: false, solar: false, twilight: false }, trips: 0 },
     puzzle: { solved: false, attempts: 0 },
-    flags: { introSeen: false, finaleSeen: false },
+    discovered: [],
   };
   evaluateQuests(state);
   return state;
@@ -53,6 +79,7 @@ export function createInitialState() {
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const isInt = (n, min = 0) => Number.isInteger(n) && n >= min;
 const isPos = (p) => p === null || (p && ['x', 'y', 'z', 'yaw'].every((k) => Number.isFinite(p[k])));
+const isBool = (v) => typeof v === 'boolean';
 
 function validLight(l) {
   return (
@@ -63,17 +90,33 @@ function validLight(l) {
     byId(MOTIONS, l.motion) &&
     Number.isFinite(l.brightness) &&
     l.brightness >= 0 &&
-    l.brightness <= 100
+    l.brightness <= 100 &&
+    ['crafted', 'traded', 'woven'].includes(l.origin)
+  );
+}
+
+function validProfile(p) {
+  return (
+    p &&
+    isBool(p.created) &&
+    byId(BASES, p.base) &&
+    byId(BODY_COLORS, p.body) &&
+    byId(CHEST_COLORS, p.chest) &&
+    byId(SYMBOLS, p.symbol) &&
+    byId(ACCESSORIES, p.accessory) &&
+    typeof p.name === 'string' &&
+    p.name.length <= 12
   );
 }
 
 /**
- * 저장 데이터 검증. 구조가 조금이라도 어긋나면 해당 항목만 버리지 않고
- * 전체를 새 상태로 되돌린다(부분 복구가 보상 중복을 만들 수 있기 때문).
+ * 저장 데이터 검증. 구조가 조금이라도 어긋나면 전체를 새 상태로 되돌린다
+ * (부분 복구가 보상 중복을 만들 수 있기 때문).
  */
 export function sanitize(raw) {
   try {
     if (!raw || typeof raw !== 'object' || raw.version !== SAVE_VERSION) throw new Error('version');
+    if (!validProfile(raw.profile)) throw new Error('profile');
     if (!SCENES.includes(raw.scene)) throw new Error('scene');
     if (raw.arrival !== null && typeof raw.arrival !== 'string') throw new Error('arrival');
     if (!raw.positions || SCENES.some((s) => !isPos(raw.positions[s] ?? null))) throw new Error('positions');
@@ -87,19 +130,23 @@ export function sanitize(raw) {
       if (v !== null && !raw.lights.some((l) => l.id === v)) throw new Error('slotRef');
     }
     if (!raw.quests || QUEST_ORDER.some((id) => !STATUS.includes(raw.quests[id]))) throw new Error('quests');
+    if (!raw.relations || NPC_IDS.some((id) => !RELATIONS.includes(raw.relations[id]))) throw new Error('relations');
+    if (!raw.tutorial || !Array.isArray(raw.tutorial.done)) throw new Error('tutorial');
+    const wd = raw.world;
+    const base = createWorld();
+    if (!wd || Object.keys(base).some((k) => (k === 'route' ? !(wd.route === null || ROUTES.some((r) => r.id === wd.route)) : !isBool(wd[k]))))
+      throw new Error('world');
     if (!Array.isArray(raw.ledger) || !raw.ledger.every((k) => typeof k === 'string')) throw new Error('ledger');
     for (const id of QUEST_ORDER) {
       if (raw.quests[id] === 'claimed' && !raw.ledger.includes(`reward:${id}`)) throw new Error('ledgerMismatch');
     }
     const d = raw.draft;
-    if (!d || !byId(FORMS, d.form) || !byId(COLORS, d.color) || !byId(MOTIONS, d.motion) || !Number.isFinite(d.brightness))
-      throw new Error('draft');
+    if (!d || !byId(FORMS, d.form) || !byId(COLORS, d.color) || !byId(MOTIONS, d.motion) || !Number.isFinite(d.brightness)) throw new Error('draft');
     const v = raw.voyage;
-    if (!v || !v.visited || DESTINATIONS.some((k) => typeof v.visited[k] !== 'boolean') || !isInt(v.trips)) throw new Error('voyage');
-    if (!raw.puzzle || typeof raw.puzzle.solved !== 'boolean' || !isInt(raw.puzzle.attempts)) throw new Error('puzzle');
-    if (!raw.flags || typeof raw.flags.introSeen !== 'boolean' || typeof raw.flags.finaleSeen !== 'boolean') throw new Error('flags');
+    if (!v || !v.visited || DESTINATIONS.some((k) => !isBool(v.visited[k])) || !isInt(v.trips)) throw new Error('voyage');
+    if (!raw.puzzle || !isBool(raw.puzzle.solved) || !isInt(raw.puzzle.attempts)) throw new Error('puzzle');
+    if (!Array.isArray(raw.discovered)) throw new Error('discovered');
     const state = clone(raw);
-    for (const s of SCENES) state.positions[s] ??= null;
     evaluateQuests(state);
     return { state, recovered: false };
   } catch (err) {
@@ -109,20 +156,22 @@ export function sanitize(raw) {
 
 export function loadState(storage) {
   let text = null;
+  let legacy = false;
   try {
     text = storage?.getItem(SAVE_KEY) ?? null;
+    legacy = LEGACY_KEYS.some((k) => storage?.getItem(k) !== null && storage?.getItem(k) !== undefined);
   } catch {
-    return { state: createInitialState(), notice: '이 브라우저에서는 저장을 읽을 수 없어 새로 시작해요.' };
+    return { state: createInitialState(), notice: '이 브라우저에서는 저장을 읽을 수 없어 새로 시작해요.', hasSave: false };
   }
-  if (text === null) return { state: createInitialState(), notice: null, fresh: true };
+  if (text === null) return { state: createInitialState(), notice: null, hasSave: false, legacy };
   let raw;
   try {
     raw = JSON.parse(text);
   } catch {
-    return { state: createInitialState(), notice: '저장 데이터가 손상되어 새로 시작해요.' };
+    return { state: createInitialState(), notice: '저장 데이터가 손상되어 새로 시작해요.', hasSave: false };
   }
   const { state, recovered } = sanitize(raw);
-  return { state, notice: recovered ? '저장 데이터를 복구하지 못해 새로 시작해요.' : null };
+  return { state, notice: recovered ? '저장 데이터를 복구하지 못해 새로 시작해요.' : null, hasSave: !recovered && state.profile.created };
 }
 
 export function saveState(storage, state) {
@@ -134,7 +183,7 @@ export function saveState(storage, state) {
   }
 }
 
-// ------------------------------------------------------------------ 행동
+// ------------------------------------------------------------------ 규칙
 
 function grant(state, items, keyPrefix, events) {
   items.forEach((item, i) => {
@@ -147,42 +196,53 @@ function grant(state, items, keyPrefix, events) {
   });
 }
 
-export function hasUnlock(state, id) {
-  return !id || state.unlocks.includes(id);
+export const hasUnlock = (state, id) => !id || state.unlocks.includes(id);
+export const isDiscovered = (state, id) => state.discovered.includes(id);
+
+/** 기능을 여는 순서: 첫 제작은 색과 맥동만 → 첫 설치 뒤 형태 → 포근 부탁에서 밝기 */
+export function craftOptions(state) {
+  return {
+    forms: hasUnlock(state, 'forms'),
+    motions: hasUnlock(state, 'recipe') ? MOTIONS.filter((m) => hasUnlock(state, m.unlock)).map((m) => m.id) : ['pulse'],
+    brightness: hasUnlock(state, 'brightness'),
+    colors: COLORS.filter((c) => hasUnlock(state, c.unlock)).map((c) => c.id),
+  };
 }
 
-export const isDiscovered = (state, id) => state.ledger.includes(`discover:${id}`);
+/** 빛 만들기 비용: 첫 빛은 재료 없이 */
+export function craftCost(state) {
+  return state.world.firstCrafted ? 1 : 0;
+}
 
-/** 설치 가능 여부와 불가 사유 */
-export function slotAvailability(state, slotId) {
+export function slotAvailability(state, slotId, lightId = null) {
   const questId = SLOT_QUEST[slotId];
   const st = state.quests[questId];
   const placed = lightAt(state, slotId);
   if (st === 'claimed') return { canPlace: false, canRetrieve: false, reason: '주민이 아끼는 빛이라 그대로 두어요.' };
   if (st !== 'active' && st !== 'completed') {
-    return { canPlace: false, canRetrieve: false, reason: `아직 잠든 자리예요. ‘${QUESTS[questId].title}’ 부탁을 받으면 열려요.` };
+    const q = QUESTS[questId];
+    return { canPlace: false, canRetrieve: false, reason: `아직 잠든 자리예요. ‘${q.title}’ 부탁을 받으면 열려요.` };
   }
-  if (placed) return { canPlace: false, canRetrieve: true, reason: '이미 빛이 놓여 있어요. 거두면 씨앗으로 돌아와요.' };
-  if (state.materials.seed < 1) return { canPlace: false, canRetrieve: false, reason: '별빛 씨앗이 없어요. 산책로·온실에서 찾아볼 수 있어요.' };
+  if (slotId === 'lantern' && state.world.tuned) return { canPlace: false, canRetrieve: false, reason: '등불들이 이 빛에 박자를 맞췄어요.' };
+  if (placed) return { canPlace: false, canRetrieve: true, reason: '이미 빛이 놓여 있어요. 거두면 다시 들고 다녀요.' };
+  const carried = carriedLights(state).filter((l) => l.origin === 'crafted');
+  if (!carried.length) return { canPlace: false, canRetrieve: false, reason: '들고 있는 빛이 없어요. 빛 제작실 작업대에서 빚을 수 있어요.' };
+  if (lightId !== null && !carried.some((l) => l.id === lightId)) return { canPlace: false, canRetrieve: false, reason: '그 빛은 지금 들고 있지 않아요.' };
   return { canPlace: true, canRetrieve: false, reason: null };
-}
-
-/** 항해 정원(빛 오르간)의 빛이 가리키는 목적지 */
-export function destinationFor(state) {
-  const helm = lightAt(state, 'helm');
-  if (!helm) return null;
-  const t = colorTemp(helm.color);
-  if (t <= COOL_LIMIT) return 'ice';
-  if (t >= WARM_LIMIT) return 'solar';
-  return 'twilight';
 }
 
 export function canDepart(state) {
   if (isDestination(state.scene)) return { ok: true, to: 'overlook', reason: null };
-  if (state.scene !== 'overlook') return { ok: false, to: null, reason: '항해 전망대의 빛 오르간에서 출항할 수 있어요.' };
-  const to = destinationFor(state);
-  if (!to) return { ok: false, to: null, reason: '빛 오르간에 빛을 보내야 해파리가 움직여요.' };
-  return { ok: true, to, reason: null };
+  if (state.scene !== 'overlook') return { ok: false, to: null, reason: '항해 전망대의 항해 나무에서 출항할 수 있어요.' };
+  if (!state.world.organFed) return { ok: false, to: null, reason: '항해 나무가 아직 반응하지 않아요. 엮은 빛이 필요해요.' };
+  if (!state.world.route) return { ok: false, to: null, reason: '보라와 함께 목적지를 먼저 골라요.' };
+  return { ok: true, to: state.world.route, reason: null };
+}
+
+const RELATION_RANK = (r) => RELATIONS.indexOf(r);
+function raiseRelation(state, npc, rel) {
+  if (!NPC_IDS.includes(npc)) return;
+  if (RELATION_RANK(rel) > RELATION_RANK(state.relations[npc])) state.relations[npc] = rel;
 }
 
 /**
@@ -192,29 +252,50 @@ export function reduce(prev, action) {
   const state = clone(prev);
   const events = [];
   let error = null;
+  const W = state.world;
   switch (action.type) {
-    case 'seeIntro':
-      state.flags.introSeen = true;
-      break;
-    case 'seeFinale':
-      state.flags.finaleSeen = true;
-      break;
-    case 'setDraft': {
-      const { key, value } = action;
-      if (key === 'form' && byId(FORMS, value)) state.draft.form = value;
-      else if (key === 'color') {
-        const c = byId(COLORS, value);
-        if (c && hasUnlock(state, c.unlock)) state.draft.color = value;
-        else error = '아직 배우지 못한 배색이에요.';
-      } else if (key === 'motion') {
-        const m = byId(MOTIONS, value);
-        if (m && hasUnlock(state, m.unlock)) state.draft.motion = value;
-        else error = '아직 모르는 움직임이에요.';
-      } else if (key === 'brightness' && Number.isFinite(value)) {
-        state.draft.brightness = Math.max(20, Math.min(100, Math.round(value)));
-      } else error = '알 수 없는 제작 값이에요.';
+    // ---------------------------------------------------- 내 모습
+    case 'setProfile': {
+      const p = { ...state.profile, ...action.profile };
+      if (!byId(BASES, p.base) || !byId(BODY_COLORS, p.body) || !byId(CHEST_COLORS, p.chest) || !byId(SYMBOLS, p.symbol)) {
+        error = '고를 수 없는 모습이에요.';
+        break;
+      }
+      const acc = byId(ACCESSORIES, p.accessory);
+      if (!acc || !hasUnlock(state, acc.unlock)) {
+        error = '아직 받지 못한 장식이에요.';
+        break;
+      }
+      p.name = cleanName(p.name);
+      if (action.confirm) {
+        if (!p.created) events.push({ type: 'profileCreated' });
+        p.created = true;
+      }
+      state.profile = p;
       break;
     }
+    case 'seeOpening':
+      W.openingSeen = true;
+      break;
+    case 'tutorial': {
+      const id = action.id;
+      if (TUTORIAL_STEPS.includes(id) && !state.tutorial.done.includes(id)) {
+        state.tutorial.done.push(id);
+        events.push({ type: 'tutorialStep', id });
+      }
+      break;
+    }
+    // ---------------------------------------------------- 주민
+    case 'meet':
+      raiseRelation(state, action.npc, 'met');
+      break;
+    case 'walkTogether':
+      if (state.relations[action.npc] !== 'resolved' && state.relations[action.npc] !== 'companion') {
+        error = '아직 함께 걸을 사이가 아니에요.';
+        break;
+      }
+      raiseRelation(state, action.npc, 'companion');
+      break;
     case 'acceptQuest': {
       const id = action.id;
       if (state.quests[id] !== 'available') {
@@ -223,6 +304,7 @@ export function reduce(prev, action) {
       }
       state.quests[id] = 'active';
       grant(state, QUESTS[id].onAccept ?? [], `accept:${id}`, events);
+      raiseRelation(state, QUESTS[id].giver, 'accepted');
       events.push({ type: 'questAccepted', id });
       break;
     }
@@ -233,10 +315,76 @@ export function reduce(prev, action) {
         error = state.quests[id] === 'claimed' ? '이미 받은 선물이에요.' : '아직 부탁을 끝내지 않았어요.';
         break;
       }
+      if (QUESTS[id].auto && !action.auto) {
+        error = '이 목표는 스스로 완료돼요.';
+        break;
+      }
       state.ledger.push(key);
       grant(state, QUESTS[id].rewards, `rewardItem:${id}`, events);
       state.quests[id] = 'claimed';
+      raiseRelation(state, QUESTS[id].giver, 'resolved');
+      if (id === 'q04') {
+        W.chapterDone = true;
+        events.push({ type: 'chapterDone' });
+      }
       events.push({ type: 'questClaimed', id });
+      break;
+    }
+    // ---------------------------------------------------- 제작
+    case 'openBench':
+      if (!W.benchOpened) {
+        W.benchOpened = true;
+        events.push({ type: 'benchOpened' });
+      }
+      break;
+    case 'setDraft': {
+      const { key, value } = action;
+      const opt = craftOptions(state);
+      if (key === 'form') {
+        if (!byId(FORMS, value)) error = '알 수 없는 형태예요.';
+        else if (!opt.forms && value !== state.draft.form) error = '형태는 첫 빛을 놓은 뒤에 고를 수 있어요.';
+        else state.draft.form = value;
+      } else if (key === 'color') {
+        if (opt.colors.includes(value)) state.draft.color = value;
+        else error = '아직 배우지 못한 배색이에요.';
+      } else if (key === 'motion') {
+        if (opt.motions.includes(value)) state.draft.motion = value;
+        else error = '아직 모르는 움직임이에요.';
+      } else if (key === 'brightness' && Number.isFinite(value)) {
+        if (!opt.brightness) error = '밝기 조절은 포근에게 배울 수 있어요.';
+        else state.draft.brightness = Math.max(20, Math.min(100, Math.round(value)));
+      } else error = '알 수 없는 제작 값이에요.';
+      break;
+    }
+    case 'craftLight': {
+      if (!W.benchOpened) {
+        error = '작업대를 먼저 깨워요.';
+        break;
+      }
+      const cost = craftCost(state);
+      if (state.materials.seed < cost) {
+        error = '별빛 씨앗이 필요해요. 주민 부탁이나 씨앗 온실에서 얻을 수 있어요.';
+        break;
+      }
+      state.materials.seed -= cost;
+      const d = state.draft;
+      const light = { id: state.nextLightId++, form: d.form, color: d.color, motion: d.motion, brightness: d.brightness, origin: 'crafted' };
+      state.lights.push(light);
+      if (!W.firstCrafted) {
+        W.firstCrafted = true;
+        events.push({ type: 'firstLight', light });
+      }
+      events.push({ type: 'lightCrafted', light });
+      break;
+    }
+    case 'reshapeLight': {
+      const l = lightById(state, action.lightId);
+      if (!l || l.origin !== 'crafted' || !carriedLights(state).some((c) => c.id === l.id)) {
+        error = '들고 있는 내 빛만 다시 빚을 수 있어요.';
+        break;
+      }
+      Object.assign(l, { form: state.draft.form, color: state.draft.color, motion: state.draft.motion, brightness: state.draft.brightness });
+      events.push({ type: 'lightReshaped', light: { ...l } });
       break;
     }
     case 'placeLight': {
@@ -245,23 +393,15 @@ export function reduce(prev, action) {
         error = '없는 설치 지점이에요.';
         break;
       }
-      const av = slotAvailability(state, slotId);
+      const carried = carriedLights(state).filter((l) => l.origin === 'crafted');
+      const lightId = action.lightId ?? carried[carried.length - 1]?.id ?? null;
+      const av = slotAvailability(state, slotId, lightId);
       if (!av.canPlace) {
         error = av.reason;
         break;
       }
-      const d = state.draft;
-      if (!hasUnlock(state, byId(COLORS, d.color)?.unlock) || !hasUnlock(state, byId(MOTIONS, d.motion)?.unlock)) {
-        error = '아직 쓸 수 없는 성질이 들어 있어요.';
-        break;
-      }
-      // 제작: 씨앗 1개로 빛 인스턴스 생성 → 설치
-      state.materials.seed -= 1;
-      const light = { id: state.nextLightId++, form: d.form, color: d.color, motion: d.motion, brightness: d.brightness };
-      state.lights.push(light);
-      events.push({ type: 'lightCrafted', light });
-      state.slots[slotId] = light.id;
-      events.push({ type: 'lightPlaced', slot: slotId, light });
+      state.slots[slotId] = lightId;
+      events.push({ type: 'lightPlaced', slot: slotId, light: lightById(state, lightId) });
       break;
     }
     case 'retrieveLight': {
@@ -271,22 +411,108 @@ export function reduce(prev, action) {
         error = av.reason;
         break;
       }
-      const lightId = state.slots[slotId];
       state.slots[slotId] = null;
-      state.lights = state.lights.filter((l) => l.id !== lightId);
-      state.materials.seed += 1;
       events.push({ type: 'lightRetrieved', slot: slotId });
       break;
     }
-    case 'travel': {
-      const link = LINKS[`${state.scene}:${action.via}`];
-      if (!link) {
-        error = '이쪽으로는 아직 갈 수 없어요.';
+    // ---------------------------------------------------- 길 복원
+    case 'tuned': {
+      if (!lightAt(state, 'lantern')) {
+        error = '첫 등불에 빛을 먼저 놓아요.';
         break;
       }
-      state.scene = link[0];
-      state.arrival = link[1];
-      events.push({ type: 'entered', scene: link[0] });
+      if (!W.tuned) {
+        W.tuned = true;
+        W.tunedAssisted = !!action.assisted;
+        events.push({ type: 'lanternsTuned' });
+      }
+      break;
+    }
+    case 'restoreBridge':
+      if (!W.tuned) {
+        error = '등불의 박자가 아직 어긋나 있어요.';
+        break;
+      }
+      if (!W.bridgeRestored) {
+        W.bridgeRestored = true;
+        raiseRelation(state, 'salgu', 'progress');
+        grant(state, [{ kind: 'unlock', id: 'bridge' }], 'bridge', events);
+        events.push({ type: 'bridgeRestored' });
+      }
+      break;
+    // ---------------------------------------------------- 교환·엮기
+    case 'wakeBud':
+      if (state.quests.q03 !== 'active') {
+        error = '리본의 이야기를 먼저 들어 보세요.';
+        break;
+      }
+      if (!W.budAwake) {
+        W.budAwake = true;
+        events.push({ type: 'budAwake' });
+      }
+      break;
+    case 'trade': {
+      if (!W.budAwake) {
+        error = '봉오리가 깨어나야 리본이 빛을 나눌 수 있어요.';
+        break;
+      }
+      if (W.traded) {
+        error = '이미 빛을 나눴어요.';
+        break;
+      }
+      // 규칙: 리본은 내 빛의 원본이 아니라 복제한 작은 조각을 받는다(내 빛은 그대로)
+      const light = { id: state.nextLightId++, form: 'orb', color: 'mint', motion: 'float', brightness: 70, origin: 'traded' };
+      state.lights.push(light);
+      W.traded = true;
+      raiseRelation(state, 'ribbon', 'progress');
+      grant(state, [], 'trade', events);
+      events.push({ type: 'traded', light });
+      break;
+    }
+    case 'weave': {
+      const got = carriedLights(state).find((l) => l.origin === 'traded');
+      const mine = state.lights.find((l) => l.origin === 'crafted');
+      if (!got || !mine) {
+        error = '내 빛의 제작법과 받은 빛이 함께 있어야 엮을 수 있어요.';
+        break;
+      }
+      state.lights = state.lights.filter((l) => l.id !== got.id);
+      const woven = { id: state.nextLightId++, form: 'thread', color: mine.color, motion: 'pulse', brightness: 80, origin: 'woven' };
+      state.lights.push(woven);
+      W.woven = true;
+      events.push({ type: 'woven', light: woven });
+      break;
+    }
+    // ---------------------------------------------------- 항해
+    case 'feedOrgan': {
+      if (state.scene !== 'overlook') {
+        error = '항해 전망대의 항해 나무에 보낼 수 있어요.';
+        break;
+      }
+      if (state.quests.q04 !== 'active') {
+        error = '보라와 먼저 이야기해 보세요.';
+        break;
+      }
+      const woven = carriedLights(state).find((l) => l.origin === 'woven');
+      if (!woven) {
+        error = '엮은 빛이 필요해요.';
+        break;
+      }
+      state.lights = state.lights.filter((l) => l.id !== woven.id);
+      W.organFed = true;
+      events.push({ type: 'organFed' });
+      break;
+    }
+    case 'chooseRoute': {
+      if (!W.organFed) {
+        error = '항해 나무가 먼저 깨어나야 해요.';
+        break;
+      }
+      if (!ROUTES.some((r) => r.id === action.route)) {
+        error = '지금은 갈 수 없는 곳이에요.';
+        break;
+      }
+      W.route = action.route;
       break;
     }
     case 'depart': {
@@ -299,7 +525,30 @@ export function reduce(prev, action) {
       state.arrival = DOCKS[check.to];
       state.voyage.trips += 1;
       if (isDestination(check.to)) state.voyage.visited[check.to] = true;
-      events.push({ type: 'arrived', scene: check.to });
+      events.push({ type: 'departed', scene: check.to });
+      break;
+    }
+    case 'arrivalControl': {
+      if (!isDestination(state.scene)) break;
+      if (!W.arrived) {
+        W.arrived = true;
+        events.push({ type: 'arrived', scene: state.scene });
+      }
+      break;
+    }
+    case 'travel': {
+      const link = LINKS[`${state.scene}:${action.via}`];
+      if (!link) {
+        error = '이쪽으로는 아직 갈 수 없어요.';
+        break;
+      }
+      if (link[0] === 'overlook' && !W.bridgeRestored) {
+        error = '촉수 다리가 접혀 있어요. 등불 박자를 맞추면 길이 깨어나요.';
+        break;
+      }
+      state.scene = link[0];
+      state.arrival = link[1];
+      events.push({ type: 'entered', scene: link[0], via: link[2] });
       break;
     }
     case 'discover': {
@@ -308,13 +557,12 @@ export function reduce(prev, action) {
         error = '여기서는 찾을 수 없어요.';
         break;
       }
-      const key = `discover:${action.id}`;
-      if (state.ledger.includes(key)) {
+      if (state.discovered.includes(action.id)) {
         error = '이미 살펴본 곳이에요.';
         break;
       }
-      state.ledger.push(key);
-      grant(state, info.items, `discoverItem:${action.id}`, events);
+      state.discovered.push(action.id);
+      grant(state, info.items, `discover:${action.id}`, events);
       events.push({ type: 'discovered', id: action.id });
       break;
     }
@@ -335,15 +583,28 @@ export function reduce(prev, action) {
       if (action.success) {
         if (!state.puzzle.solved) events.push({ type: 'puzzleSolved' });
         state.puzzle.solved = true;
-      } else {
-        state.puzzle.attempts += 1;
-      }
+      } else state.puzzle.attempts += 1;
       break;
     }
     default:
       error = `unknown action ${action.type}`;
   }
   if (error) return { state: prev, events: [], error };
-  events.push(...evaluateQuests(state));
+  const qev = evaluateQuests(state);
+  events.push(...qev);
+  // 주민 없는 퀘스트는 완료되는 즉시 보상
+  for (const e of qev) {
+    if (e.type === 'questCompleted' && QUESTS[e.id].auto && !state.ledger.includes(`reward:${e.id}`)) {
+      state.ledger.push(`reward:${e.id}`);
+      grant(state, QUESTS[e.id].rewards, `rewardItem:${e.id}`, events);
+      state.quests[e.id] = 'claimed';
+      if (e.id === 'q04') {
+        W.chapterDone = true;
+        events.push({ type: 'chapterDone' });
+      }
+      events.push({ type: 'questClaimed', id: e.id });
+      events.push(...evaluateQuests(state));
+    }
+  }
   return { state, events, error: null };
 }

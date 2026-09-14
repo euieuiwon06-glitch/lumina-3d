@@ -1,33 +1,54 @@
 import './styles/tokens.css';
 import './styles/game.css';
 import './styles/three.css';
+import './styles/story.css';
 
 import * as THREE from 'three';
 
 import { chime, isMuted, setMuted, softBuzz, unlockAudio } from './engine/audio.js';
 import { FollowCamera } from './engine/camera.js';
 import { Character, loadCharacters } from './engine/character.js';
-import { Beacon, GroundRing, LightProp, SongCrystal, Sparkles, glowTexture, preloadLightImages, starTexture } from './engine/props.js';
+import { CharacterPreview } from './engine/preview.js';
+import { GroundRing, LightProp, SongCrystal, Sparkles, glowTexture, preloadLightImages, starTexture } from './engine/props.js';
 import { clientToStage, mountStage, stage } from './engine/stage.js';
+import { BridgeGate, Glimmer, GuideWisp, Lantern, LightFlow, LightGate, PetalLift, SleepingBud } from './engine/story-props.js';
+import { ObjectiveMarker, PathTrail } from './engine/guide-fx.js';
+import { guideTarget } from './game/guide.js';
 import { findPath, floodReachable, groundAt, nearestReachable, nearestWalkable, pickGround, smoothGround, stepMove } from './engine/walkgrid.js';
 import { World } from './engine/world.js';
-import { DISCOVERIES, MATERIALS, UNLOCKS, lightName } from './game/catalog.js';
+import { BASES, BODY_COLORS, CHEST_COLORS, DISCOVERIES, MATERIALS, UNLOCKS, byId, lightName } from './game/catalog.js';
+import { BRANCH_LINES, dialogueFor } from './game/dialogue.js';
 import { createPuzzle, finishListening, listen, press } from './game/puzzle.js';
-import { NPC_LINES, SCENE_INFO } from './game/scenes.js';
-import { GIVER_NAMES, QUESTS, QUEST_ORDER, isDestination, lightAt } from './game/quests.js';
-import { SAVE_KEY, SCENES, canDepart, destinationFor, isDiscovered, loadState, reduce, saveState, slotAvailability } from './game/state.js';
+import { GIVER_NAMES, QUESTS, carriedLights, isDestination, lightAt } from './game/quests.js';
+import { NPCS, SCENE_INFO, npcsInScene } from './game/scenes.js';
+import { LEGACY_KEYS, LINKS, SAVE_KEY, SCENES, canDepart, createInitialState, isDiscovered, loadState, reduce, saveState, slotAvailability } from './game/state.js';
+import { autoTune, createTuning, glowAt, press as tunePressLogic, start as tuneStart } from './game/tuning.js';
+import { assetUrl } from './ui/assets.js';
 import { createHud } from './ui/hud.js';
-import { createQuestModal } from './ui/modal.js';
-import { createFader, createFinale, createIntro, createToast, createVoyage } from './ui/overlays.js';
+import { createFader, createToast } from './ui/overlays.js';
 import { createBubble, createCraftPanel, createPrompt, createPuzzlePanel, createSlotPanel } from './ui/panels.js';
+import {
+  createBanner,
+  createControlsHelp,
+  createCreator,
+  createDialogue,
+  createExchangePanel,
+  createHint,
+  createRoutePanel,
+  createSettings,
+  createTitle,
+  createTuningPanel,
+  createVoyageCinematic,
+  createObjectivePointer,
+} from './ui/story.js';
 
 const WALK_SPEED = 3.0;
 const RUN_SPEED = 5.2;
 const TALK_RADIUS = 2.4;
 const PANEL_CLOSE_RADIUS = 5;
-const KEYMAP = {
-  KeyW: 'f', ArrowUp: 'f', KeyS: 'b', ArrowDown: 'b', KeyA: 'l', ArrowLeft: 'l', KeyD: 'r', ArrowRight: 'r',
-};
+const SETTINGS_KEY = 'lumina-3d-settings';
+const KEYMAP = { KeyW: 'f', ArrowUp: 'f', KeyS: 'b', ArrowDown: 'b', KeyA: 'l', ArrowLeft: 'l', KeyD: 'r', ArrowRight: 'r' };
+const V3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 
 async function boot() {
   const canvas = document.getElementById('world');
@@ -36,7 +57,41 @@ async function boot() {
   const overlayRoot = document.getElementById('overlays');
   const bootEl = document.getElementById('boot');
   const params = new URLSearchParams(location.search);
-  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ------------------------------------------------------------------ 저장·설정
+  const storage = (() => {
+    try {
+      return window.localStorage;
+    } catch {
+      return null;
+    }
+  })();
+  const settings = { hints: true, guide: true, reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches, muted: false };
+  try {
+    Object.assign(settings, JSON.parse(storage?.getItem(SETTINGS_KEY) ?? '{}'));
+  } catch {
+    /* 기본값 */
+  }
+  setMuted(settings.muted);
+  const saveSettings = () => {
+    try {
+      storage?.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    } catch {
+      /* 저장 불가 */
+    }
+  };
+  if (params.has('reset')) {
+    try {
+      storage?.removeItem(SAVE_KEY);
+    } catch {
+      /* 저장소 접근 불가 */
+    }
+    params.delete('reset');
+    const qs = params.toString();
+    history.replaceState(null, '', `${location.pathname}${qs ? `?${qs}` : ''}${location.hash}`);
+  }
+  let loaded = loadState(storage);
+  let state = loaded.state;
 
   // ------------------------------------------------------------------ 렌더러
   let renderer;
@@ -48,8 +103,8 @@ async function boot() {
   }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, params.has('lowres') ? 1 : 1.75));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  // 배경 .blend는 AgX 룩으로 제작됨(캐릭터 .blend는 Standard 뷰 → 캐릭터 재질만 톤매핑 제외)
-  renderer.toneMapping = params.get('tm') === 'neutral' ? THREE.NeutralToneMapping : THREE.AgXToneMapping;
+  // 배경은 블렌더 AgX 룩으로 구웠다(캐릭터는 Standard 뷰로 제작 → 캐릭터 재질만 톤매핑 제외)
+  renderer.toneMapping = THREE.AgXToneMapping;
   const camera = new THREE.PerspectiveCamera(55, 1, 0.05, 2500);
   mountStage(stageEl, () => {
     renderer.setSize(window.innerWidth, window.innerHeight, false);
@@ -61,50 +116,73 @@ async function boot() {
   const scene3 = world.scene;
   const follow = new FollowCamera(camera);
   const sparkles = new Sparkles(scene3);
-
-  // ------------------------------------------------------------------ 저장
-  const storage = (() => {
-    try {
-      return window.localStorage;
-    } catch {
-      return null;
-    }
-  })();
-  if (params.has('reset')) {
-    try {
-      storage?.removeItem(SAVE_KEY);
-    } catch {
-      /* 저장소 접근 불가 */
-    }
-    params.delete('reset');
-    const qs = params.toString();
-    history.replaceState(null, '', `${location.pathname}${qs ? `?${qs}` : ''}${location.hash}`);
-  }
-  const loaded = loadState(storage);
-  let state = loaded.state;
-  if (params.get('scene') && SCENES.includes(params.get('scene'))) state = { ...state, scene: params.get('scene'), arrival: null };
+  const wisp = new GuideWisp();
+  scene3.add(wisp.object);
+  // 길 안내: 목표 핀 + 바닥 빛 길(장면이 바뀌어도 유지되도록 dynamic 밖에 둔다)
+  const objMarker = new ObjectiveMarker();
+  const trail = new PathTrail();
+  scene3.add(objMarker.object, trail.object);
+  const guideState = { key: '', routeAt: 0, spot: null };
 
   // ------------------------------------------------------------------ 표시 상태
   const view = {
-    mode: 'loading', // loading | play | modal | voyage | intro | finale
-    panel: null, // { kind: 'slot'|'craft'|'puzzle', id }
+    mode: 'title', // title | creator | loading | cinematic | play | dialogue | panel-modal | voyage | transit | menu
+    panel: null, // { kind: 'slot'|'craft'|'puzzle'|'tune', id }
     questCollapsed: false,
     puzzle: createPuzzle(),
+    tuning: null,
     crystalWrong: null,
     target: null,
+    glimmersFound: new Set(),
+    companion: null,
+    lastProgress: performance.now(),
+    wispAt: 0,
+    arrivedAt: 0,
+    lookYaw: 0,
   };
   const keys = new Set();
   let run = false;
-  let path = null; // 클릭 이동 경유점
+  let path = null;
   let pathDone = null;
   let playToken = 0;
   let wasWalking = false;
   let time = 0;
+  let movedDistance = 0;
 
   const actors = { player: null, npcs: [] };
-  let spots = []; // 상호작용 대상
-  let clickables = []; // 광선 판정용 메시
-  const props = { slots: new Map(), rings: [], beacons: [], crystals: [], preview: null, workbenchPreview: null, sleepers: [], discoveries: new Map() };
+  let spots = [];
+  let clickables = [];
+  const props = {
+    slots: new Map(),
+    rings: [],
+    doors: [],
+    lifts: new Map(),
+    crystals: [],
+    preview: null,
+    benchPreview: null,
+    lanterns: new Map(),
+    gate: null,
+    bud: null,
+    glimmers: [],
+    flows: [],
+    discoveries: new Map(),
+  };
+  let reach = null;
+  let gridOriginal = null;
+  let cinematic = null; // { update(dt), skip() }
+  let portraits = {};
+
+  const portraitFor = (id) => {
+    if (id === 'player') return portraits.player;
+    const model = NPCS[id]?.model;
+    return model ? assetUrl(`portraits/${model}.png`) : null;
+  };
+  const profileLook = (p = state.profile) => ({
+    bodyHex: byId(BODY_COLORS, p.body).hex,
+    chestHex: byId(CHEST_COLORS, p.chest).hex,
+    symbol: p.symbol,
+    accessory: p.accessory,
+  });
 
   // ------------------------------------------------------------------ UI
   const actions = {
@@ -116,62 +194,225 @@ async function boot() {
       dispatch({ type: 'setDraft', key, value });
     },
     interact() {
+      if (view.mode === 'play' && view.panel?.kind === 'tune') return actions.tunePress();
       if (view.target) interactWith(view.target);
     },
     place() {
       const id = view.panel?.id;
       if (!id) return;
       if (dispatch({ type: 'placeLight', slot: id })) {
-        const sp = spots.find((s) => s.kind === 'slot' && s.id === id);
-        sparkles.burst(sp.pos.clone().add(new THREE.Vector3(0, 1, 0)), 22, reducedMotion);
+        const e = props.slots.get(id);
+        sparkles.burst(e.pos.clone().add(V3(0, 1, 0)), 22, settings.reducedMotion);
         chime(659.25, 0.5, 0.1);
+        if (id === 'shelter') {
+          const l = lightAt(state, 'shelter');
+          const pogeun = actors.npcs.find((n) => n.id === 'pogeun');
+          if (pogeun && l && l.brightness > 60) bubble.show('포근: 앗, 눈부셔요…! 밝기를 조금만 낮춰 줄래요?', () => project(pogeun.char.position, pogeun.char.height + 0.2));
+        }
       }
     },
     retrieve() {
       const id = view.panel?.id;
       if (id) dispatch({ type: 'retrieveLight', slot: id });
     },
-    closePanel,
-    requestDepart,
-    finishVoyage,
-    acceptQuest(id) {
-      dispatch({ type: 'acceptQuest', id });
-      modal.refresh(state);
-    },
-    claimReward(id) {
-      if (dispatch({ type: 'claimReward', id })) {
-        modal.refresh(state);
-        if (id === 'finale') {
-          closeModal();
-          setTimeout(openFinale, 900);
-        }
+    craft() {
+      if (dispatch({ type: 'craftLight' })) {
+        const top = spots.find((s) => s.kind === 'workbench')?.top;
+        if (top) sparkles.burst(top.clone().add(V3(0, 0.3, 0)), 26, settings.reducedMotion);
+        chime(783.99, 0.6, 0.1);
       }
     },
-    closeModal,
-    startGame() {
-      dispatch({ type: 'seeIntro' });
-      intro.hide();
-      view.mode = 'play';
-      refresh();
-      toast.show('작업대를 둘러본 뒤, 문으로 나가 캡슐 마을의 포근을 만나 보세요.', 5000);
+    reshape() {
+      const carried = carriedLights(state).filter((l) => l.origin === 'crafted');
+      if (carried.length) dispatch({ type: 'reshapeLight', lightId: carried[carried.length - 1].id });
     },
-    closeFinale() {
-      finale.hide();
-      view.mode = 'play';
-      refresh();
-    },
+    closePanel,
+    requestDepart,
     puzzleStart: () => startListening(),
     puzzleListen: () => startListening(),
     puzzlePress,
     toggleSound() {
-      setMuted(!isMuted());
+      settings.muted = !isMuted();
+      setMuted(settings.muted);
+      saveSettings();
       refresh();
     },
     rotateCamera(dir) {
       follow.autoYaw = follow.yaw - dir * (Math.PI / 4);
+      markLook(Math.PI / 4);
     },
     recenterCamera() {
       follow.autoYaw = actors.player ? actors.player.yaw + Math.PI : follow.yaw;
+    },
+    // 시작 화면
+    newJourney(confirmed = false) {
+      if (loaded.hasSave && !confirmed) {
+        title.confirmNew();
+        return;
+      }
+      state = createInitialState();
+      try {
+        storage?.removeItem(SAVE_KEY);
+      } catch {
+        /* 저장소 접근 불가 */
+      }
+      loaded = { state, hasSave: false };
+      title.hide();
+      openCreator(true);
+    },
+    async continueJourney() {
+      if (!loaded.hasSave) return;
+      title.hide();
+      buildPlayer();
+      await enterScene();
+      if (loaded.notice) toast.show(loaded.notice, 6000);
+    },
+    // 내 모습 만들기
+    pick(key, value) {
+      creatorDraft = { ...creatorDraft, [key]: value };
+      creator.update({ ...creatorDraft }, state.unlocks);
+      if (key !== 'name') preview.setCharacter(byId(BASES, creatorDraft.base).model, profileLook(creatorDraft));
+      if (key === 'base') preview.wave();
+    },
+    previewWave: () => preview.wave(),
+    async confirmProfile() {
+      const first = !state.profile.created;
+      if (!dispatch({ type: 'setProfile', profile: creatorDraft, confirm: true })) return;
+      creator.hide();
+      preview.stop();
+      portraits.player = preview.snapshot(byId(BASES, state.profile.base).model, profileLook());
+      buildPlayer();
+      if (first) {
+        await playOpening();
+      } else {
+        view.mode = 'play';
+        const pos = actors.player.position.clone();
+        world.dynamic.add(actors.player.object);
+        actors.player.position.copy(pos);
+        refresh();
+        toast.show(`${state.profile.name}의 새 모습이에요.`);
+      }
+    },
+    closeCreator() {
+      creator.hide();
+      preview.stop();
+      if (!state.profile.created) {
+        pendingDraft = { ...creatorDraft };
+        view.mode = 'title';
+        title.show({ hasSave: loaded.hasSave, name: state.profile.name, legacy: loaded.legacy });
+      } else {
+        view.mode = 'play';
+        refresh();
+      }
+    },
+    dialogueClosed() {
+      if (view.mode === 'dialogue') {
+        view.mode = 'play';
+        refresh();
+      }
+    },
+    // 조율
+    tunePress() {
+      if (!view.tuning) return;
+      unlockAudio();
+      const before = view.tuning;
+      view.tuning = tunePressLogic(view.tuning, time);
+      const lanternName = SCENE_INFO.walkway.offbeat[before.index];
+      if (view.tuning.lastResult === 'hit' && view.tuning.hits > before.hits) {
+        const l = props.lanterns.get(lanternName);
+        if (l) {
+          l.state = 'on';
+          l.flash = 1;
+          sparkles.burst(l.object.position.clone().add(V3(0, 1.6, 0)), 14, settings.reducedMotion);
+        }
+        chime(587.33 + before.index * 110, 0.5, 0.12);
+      } else {
+        softBuzz();
+      }
+      if (view.tuning.status === 'done') finishTuning(false);
+    },
+    tuneAuto() {
+      view.tuning = autoTune(view.tuning);
+      if (view.tuning.status === 'done') finishTuning(true);
+    },
+    tuneCancel() {
+      view.tuning = null;
+      view.panel = null;
+      for (const n of SCENE_INFO.walkway.offbeat) if (props.lanterns.get(n)) props.lanterns.get(n).state = 'offbeat';
+      refresh();
+    },
+    // 교환·엮기
+    exchangeCancel() {
+      exchange.hide();
+      view.mode = 'play';
+      refresh();
+    },
+    exchangeConfirm() {
+      exchange.hide();
+      view.mode = 'play';
+      if (exchangeMode === 'trade') {
+        if (dispatch({ type: 'trade' })) playTradeAnimation();
+      } else if (dispatch({ type: 'weave' })) {
+        sparkles.burst(actors.player.position.clone().add(V3(0, 1.4, 0)), 34, settings.reducedMotion);
+        chime(880, 0.8, 0.12);
+        setTimeout(() => talkTo('ribbon'), 900);
+      }
+      refresh();
+    },
+    // 항로
+    routeCancel() {
+      routes.hide();
+      view.mode = 'play';
+      refresh();
+    },
+    routeConfirm() {
+      const r = routes.chosen;
+      routes.hide();
+      view.mode = 'play';
+      if (r && dispatch({ type: 'chooseRoute', route: r })) startVoyage();
+      else refresh();
+    },
+    voyageSkip() {
+      voyageSkipRequested = true;
+    },
+    // 설정
+    openSettings() {
+      if (view.mode !== 'play') return;
+      closePanel();
+      view.mode = 'menu';
+      settingsUi.show(settings, state.world.bridgeRestored);
+      refresh();
+    },
+    closeSettings() {
+      settingsUi.hide();
+      view.mode = 'play';
+      refresh();
+    },
+    setSetting(id, on) {
+      if (id === 'sound') {
+        settings.muted = !on;
+        setMuted(!on);
+      } else settings[id] = on;
+      saveSettings();
+      refresh();
+    },
+    showControls() {
+      settingsUi.hide();
+      controls.show();
+    },
+    closeControls() {
+      controls.hide();
+      view.mode = 'play';
+      refresh();
+    },
+    openCreatorFromMenu() {
+      settingsUi.hide();
+      openCreator(false);
+    },
+    toTitle() {
+      settingsUi.hide();
+      commitPosition();
+      location.reload();
     },
   };
 
@@ -181,12 +422,24 @@ async function boot() {
   const slotPanel = createSlotPanel(uiRoot, actions);
   const craftPanel = createCraftPanel(uiRoot, actions);
   const puzzlePanel = createPuzzlePanel(uiRoot, actions);
+  const tuningPanel = createTuningPanel(uiRoot, actions);
+  const hint = createHint(uiRoot);
+  const banner = createBanner(uiRoot);
   const toast = createToast(uiRoot);
-  const modal = createQuestModal(overlayRoot, actions);
-  const intro = createIntro(overlayRoot, actions);
-  const voyage = createVoyage(overlayRoot, actions);
-  const finale = createFinale(overlayRoot, actions);
+  const pointer2d = createObjectivePointer(uiRoot);
+  const dialogue = createDialogue(overlayRoot, actions);
+  const exchange = createExchangePanel(overlayRoot, actions);
+  const routes = createRoutePanel(overlayRoot, actions);
+  const voyageUi = createVoyageCinematic(overlayRoot, actions);
+  const settingsUi = createSettings(overlayRoot, actions);
+  const controls = createControlsHelp(overlayRoot, actions);
+  const creator = createCreator(overlayRoot, actions);
+  const title = createTitle(overlayRoot, actions);
   const fader = createFader(overlayRoot);
+  const preview = new CharacterPreview(creator.canvas);
+  let creatorDraft = { ...state.profile };
+  let exchangeMode = 'trade';
+  let voyageSkipRequested = false;
 
   function save() {
     if (storage && !saveState(storage, state)) toast.show('이 브라우저에서는 진행을 저장할 수 없어요.');
@@ -199,7 +452,8 @@ async function boot() {
       return false;
     }
     state = r.state;
-    save();
+    if (state.profile.created) save();
+    if (r.events.some((e) => !['tutorialStep'].includes(e.type))) view.lastProgress = performance.now();
     handleEvents(r.events);
     syncProps();
     refresh();
@@ -211,51 +465,69 @@ async function boot() {
     for (const e of events) {
       if (e.type === 'granted') {
         const info = e.item.kind === 'material' ? MATERIALS[e.item.id] : UNLOCKS[e.item.id];
-        granted.push(e.item.kind === 'material' && e.item.amount > 1 ? `${info.label} ${e.item.amount}개` : info.label);
-      } else if (e.type === 'questAccepted') {
+        if (info && e.item.id !== 'bridge') granted.push(e.item.kind === 'material' && e.item.amount > 1 ? `${info.label} ${e.item.amount}개` : info.label);
+      } else if (e.type === 'questAccepted' && QUESTS[e.id].giver) {
         toast.show(`‘${QUESTS[e.id].title}’ 부탁을 받았어요.`);
         if (e.id === 'song') view.puzzle = createPuzzle();
-      } else if (e.type === 'questCompleted') {
+      } else if (e.type === 'questCompleted' && !QUESTS[e.id].auto) {
         const q = QUESTS[e.id];
-        const npc = actors.npcs.find((n) => n.id === q.giver);
-        if (npc) sparkles.burst(npc.char.position.clone().add(new THREE.Vector3(0, 1.3, 0)), 16, reducedMotion);
-        toast.show(`조건을 모두 채웠어요! ${GIVER_NAMES[q.giver]}에게 선물을 받을 수 있어요.`);
+        toast.show(`조건을 모두 채웠어요! ${GIVER_NAMES[q.giver]}에게 알려요.`);
       } else if (e.type === 'questReopened') {
         toast.show(`‘${QUESTS[e.id].title}’ 조건이 다시 비었어요.`);
-      } else if (e.type === 'lightPlaced' && !events.some((x) => x.type === 'questCompleted')) {
-        toast.show(`${lightName(e.light)} 빛을 놓았어요. 씨앗 ${state.materials.seed}개 남았어요.`);
+      } else if (e.type === 'firstLight') {
+        banner.show('내 안의 작은 빛', `${lightName(e.light)}이 깨어났어요`, '작업대가 첫 빛의 제작법을 기억해요.', 4200);
+      } else if (e.type === 'lightCrafted' && state.world.firstCrafted && !events.some((x) => x.type === 'firstLight')) {
+        toast.show(`${lightName(e.light)}을 빚었어요. 들고 다니다가 설치 지점에 놓아요.`);
+      } else if (e.type === 'lightPlaced') {
+        if (e.slot === 'lantern') {
+          dispatchTutorial('place');
+          toast.show('첫 등불이 켜지고 주변 꽃이 피었어요! 남은 등불의 박자가 어긋나 있어요.', 4500);
+        }
       } else if (e.type === 'lightRetrieved') {
-        toast.show('빛을 거두어 별빛 씨앗으로 되돌렸어요.');
+        toast.show('빛을 거두어 다시 들고 있어요.');
       } else if (e.type === 'discovered') {
         toast.show(`발견: ${DISCOVERIES[e.id].label}`);
-      }
+      } else if (e.type === 'chapterDone') {
+        setTimeout(() => banner.show('첫 챕터 완료', '첫 번째 숨결', '해파리가 우리가 만든 빛을 따라 새로운 곳에 닿았어요.', 6500), 400);
+      } else if (e.type === 'benchOpened') dispatchTutorial('bench');
     }
-    if (granted.length) {
-      setTimeout(() => toast.show(`받았어요: ${granted.join(', ')}`), events.some((e) => e.type === 'questCompleted' || e.type === 'discovered') ? 1800 : 0);
-    }
+    if (granted.length) setTimeout(() => toast.show(`받았어요: ${granted.join(', ')}`), 1200);
   }
 
-  function questFor(npcId) {
-    const ids = QUEST_ORDER.filter((id) => QUESTS[id].giver === npcId);
-    return ids.find((id) => state.quests[id] === 'completed') ?? ids.find((id) => state.quests[id] === 'active') ?? ids.find((id) => state.quests[id] === 'available') ?? null;
+  function dispatchTutorial(id) {
+    if (!state.tutorial.done.includes(id)) {
+      const r = reduce(state, { type: 'tutorial', id });
+      if (!r.error) {
+        state = r.state;
+        if (state.profile.created) save();
+      }
+    }
   }
 
   function refresh() {
     const info = SCENE_INFO[state.scene];
     const blocked = view.mode !== 'play';
-    for (const el of [hud.elements.left, hud.elements.right, hud.elements.palette, hud.elements.dockWrap, hud.elements.camRow, prompt.el, slotPanel.el, craftPanel.el, puzzlePanel.el]) {
+    for (const el of [hud.elements.left, hud.elements.right, hud.elements.palette, hud.elements.dockWrap, hud.elements.camRow, prompt.el, slotPanel.el, craftPanel.el, puzzlePanel.el, tuningPanel.el]) {
       el.inert = blocked;
     }
-    hud.update({ state, info, view, destination: destinationFor(state) });
+    const inGame = !['title', 'creator', 'cinematic'].includes(view.mode) && !!world.root;
+    for (const el of [hud.elements.left, hud.elements.right, hud.elements.palette, hud.elements.dockWrap, hud.elements.camRow]) el.classList.toggle('is-away', !inGame);
+    // 연출 중에는 HUD만 숨기고 자막(배너)·알림은 보인다
+    uiRoot.hidden = !(inGame || view.mode === 'cinematic');
+    if (inGame) hud.update({ state, info, view });
     updatePanels();
     stageEl.dataset.scene = state.scene;
     stageEl.dataset.mode = view.mode;
-    // 주민 머리 위 표시
     for (const n of actors.npcs) {
-      const q = n.decorative ? null : questFor(n.id);
+      const q = questFor(n.id);
       n.mark.visible = !!q && (state.quests[q] === 'available' || state.quests[q] === 'completed');
       n.mark.material.color.set(q && state.quests[q] === 'completed' ? '#B9E6D3' : '#FFD0A9');
     }
+  }
+
+  function questFor(npcId) {
+    const ids = Object.keys(QUESTS).filter((id) => QUESTS[id].giver === npcId);
+    return ids.find((id) => state.quests[id] === 'completed') ?? ids.find((id) => state.quests[id] === 'available') ?? ids.find((id) => state.quests[id] === 'active') ?? null;
   }
 
   // ------------------------------------------------------------------ 투영
@@ -269,61 +541,85 @@ async function boot() {
   }
 
   function updatePanels() {
-    const player = actors.player ? project(actors.player.position, 0.6) : null;
+    const player = actors.player && world.root ? project(actors.player.position, 0.6) : null;
     const p = view.panel;
-    const slotSpot = p?.kind === 'slot' ? spots.find((s) => s.kind === 'slot' && s.id === p.id) : null;
-    slotPanel.update({ state, slot: slotSpot?.slot ?? null, anchor: slotSpot ? project(slotSpot.pos, 1.0) : null, player });
+    const slotEntry = p?.kind === 'slot' ? props.slots.get(p.id) : null;
+    slotPanel.update({ state, slot: slotEntry?.slot ?? null, anchor: slotEntry ? project(slotEntry.pos, 1.0) : null, player });
     const bench = spots.find((s) => s.kind === 'workbench');
     craftPanel.update({ state, open: p?.kind === 'craft', anchor: bench ? project(bench.pos, 1.2) : null, player });
     puzzlePanel.update({ state, view, open: p?.kind === 'puzzle', muted: isMuted(), glow: props.crystals.map((c) => c.glow) });
+    tuningPanel.update(p?.kind === 'tune' ? view.tuning : null, time);
+  }
+
+  // ------------------------------------------------------------------ 캐릭터
+  function buildPlayer() {
+    if (actors.player) actors.player.object.removeFromParent();
+    actors.player = new Character(byId(BASES, state.profile.base).model);
+    actors.player.applyProfile(profileLook());
+    if (!portraits.player) portraits.player = preview.snapshot(byId(BASES, state.profile.base).model, profileLook());
+  }
+
+  let pendingDraft = null; // 첫 설정 화면을 닫았다 돌아와도 고른 모습을 보존
+  function openCreator(first) {
+    view.mode = 'creator';
+    creatorDraft = first && pendingDraft ? { ...pendingDraft } : { ...state.profile };
+    creator.update(creatorDraft, state.unlocks);
+    creator.show(first);
+    preview.setCharacter(byId(BASES, creatorDraft.base).model, profileLook(creatorDraft));
+    preview.start();
+    setTimeout(() => {
+      preview.resize();
+      preview.wave();
+    }, 60);
+    refresh();
   }
 
   // ------------------------------------------------------------------ 장면 구성
-  let reach = null; // 장면 시작점에서 걸어서 닿는 칸
   function snapToGrid(p, maxLift = 3) {
     if (!world.grid) return p.clone();
     if (reach) {
       const r = nearestReachable(world.grid, reach, p.x, p.z, p.y - 0.2, 80);
-      if (r) return new THREE.Vector3(r.x, r.y, r.z);
+      if (r) return V3(r.x, r.y, r.z);
     }
     const w = nearestWalkable(world.grid, p.x, p.z, p.y - 0.2, 24);
     if (!w || Math.abs(w.y - p.y) > maxLift) return p.clone();
-    return new THREE.Vector3(w.x, w.y, w.z);
+    return V3(w.x, w.y, w.z);
   }
 
-  function markerGround(name, offset = [0, 0]) {
+  function markerRaw(name, offset = [0, 0]) {
     const m = world.navPoint(name);
-    if (!m) {
+    if (!m) return null;
+    return V3(m.x + offset[0], m.y - (name.startsWith('QUEST_') ? 1.2 : name.startsWith('POI_') ? 0.8 : 0), m.z + offset[1]);
+  }
+  function markerGround(name, offset = [0, 0]) {
+    const raw = markerRaw(name, offset);
+    if (!raw) {
       console.warn('[LUMINA] 동선 표시 없음', world.id, name);
       return null;
     }
-    // POI·QUEST 표시는 바닥에서 0.6~1.2m 위에 떠 있다
-    const raw = new THREE.Vector3(m.x + offset[0], m.y - (name.startsWith('QUEST_') ? 1.2 : name.startsWith('POI_') ? 0.8 : 0), m.z + offset[1]);
     return snapToGrid(raw);
   }
 
   function sceneCenter() {
     const pts = Object.entries(world.nav).filter(([k]) => /^(POI_|QUEST_|PLAYER_START|MARK_)/.test(k)).map(([, v]) => v.p);
-    if (!pts.length) return new THREE.Vector3();
-    return pts.reduce((a, b) => a.add(b), new THREE.Vector3()).multiplyScalar(1 / pts.length);
+    if (!pts.length) return V3();
+    return pts.reduce((a, b) => a.add(b), V3()).multiplyScalar(1 / pts.length);
   }
 
-  /** 입구 표시에서 장면 안쪽으로 몇 걸음 들어간 자리와 바라볼 방향 */
   function arrivalPose(markerName) {
     const m = markerGround(markerName) ?? snapToGrid(sceneCenter());
     const c = sceneCenter();
     let pos = m.clone();
-    let dir = new THREE.Vector3(c.x - m.x, 0, c.z - m.z);
+    let dir = V3(c.x - m.x, 0, c.z - m.z);
     if (world.grid) {
-      const route = findPath(world.grid, m, snapToGrid(c, 50));
+      const route = findPath(world.grid, m, snapToGrid(c, 50), 400000);
       if (route && route.length > 1) {
         let left = 3;
-        let prev = new THREE.Vector3(route[0].x, route[0].y, route[0].z);
+        let prev = V3(route[0].x, route[0].y, route[0].z);
         for (let i = 1; i < route.length && left > 0; i++) {
-          const next = new THREE.Vector3(route[i].x, route[i].y, route[i].z);
+          const next = V3(route[i].x, route[i].y, route[i].z);
           const d = prev.distanceTo(next);
-          const t = Math.min(1, left / d);
-          pos = prev.clone().lerp(next, t);
+          pos = prev.clone().lerp(next, Math.min(1, left / d));
           dir = next.clone().sub(prev).setY(0);
           left -= d;
           prev = next;
@@ -335,99 +631,112 @@ async function boot() {
     return { pos, yaw: Math.atan2(dir.x, dir.z) };
   }
 
-  function addSpot(spot) {
-    spots.push(spot);
-    return spot;
+  /** 접힌 다리: 복원 전에는 다리 너머 칸을 막는다(원본 격자는 보관) */
+  function applyGate() {
+    const g = world.grid;
+    const info = SCENE_INFO[world.id];
+    if (!g || !info?.gate) return;
+    if (!gridOriginal) gridOriginal = g.layers.map((L) => L.slice());
+    const blocked = !state.world.bridgeRestored;
+    const jLimit = (-info.gate.z - g.y0) / g.cell;
+    g.layers.forEach((L, k) => {
+      const src = gridOriginal[k];
+      for (let j = 0; j < g.h; j++) {
+        const block = blocked && j > jLimit;
+        for (let i = 0; i < g.w; i++) {
+          const n = j * g.w + i;
+          L[n] = block ? -32768 : src[n];
+        }
+      }
+    });
   }
 
-  function markMesh() {
+  function computeReach() {
+    reach = null;
+    if (!world.grid) return;
+    const info = SCENE_INFO[world.id];
+    const s0 = world.navPoint(info.start) ?? sceneCenter();
+    const w0 = nearestWalkable(world.grid, s0.x, s0.z, s0.y, 40);
+    if (w0) reach = floodReachable(world.grid, w0);
+  }
+
+  const addSpot = (s) => (spots.push(s), s);
+  function markSprite() {
     const m = new THREE.Sprite(new THREE.SpriteMaterial({ map: starTexture(), color: '#FFD0A9', transparent: true, depthWrite: false, toneMapped: false }));
     m.scale.setScalar(0.32);
     return m;
   }
 
-  async function enterScene({ label } = {}) {
-    view.mode = 'loading';
-    closePanel(true);
-    bubble.hide();
-    prompt.update(null);
-    keys.clear();
-    path = null;
-    refresh();
-    const id = state.scene;
-    const info = SCENE_INFO[id];
-    fader.show(label ?? `${info.name}(으)로 가는 중…`);
-    await world.load(id, (p) => fader.progress(p));
-
-    // 이전 장면 요소 정리
+  function clearSceneProps() {
     spots = [];
     clickables = [];
     for (const p of props.slots.values()) p.prop?.dispose();
     props.slots.clear();
     props.preview?.dispose();
     props.preview = null;
-    props.workbenchPreview?.dispose();
-    props.workbenchPreview = null;
+    props.benchPreview?.dispose();
+    props.benchPreview = null;
     props.rings = [];
-    props.beacons = [];
+    props.doors = [];
+    props.lifts.clear();
     props.crystals = [];
-    props.sleepers = [];
+    props.lanterns.clear();
+    props.gate = null;
+    props.bud = null;
+    props.glimmers = [];
+    props.flows = [];
     props.discoveries.clear();
     actors.npcs = [];
+    gridOriginal = null;
+    view.glimmersFound = new Set();
+    view.companion = null;
+  }
 
+  /** 장면을 불러와 구성한다. sceneId를 주면 연출용(플레이어 없이) */
+  async function buildScene(id, onProgress) {
+    await world.load(id, onProgress);
+    clearSceneProps();
+    const info = SCENE_INFO[id];
     const dyn = world.dynamic;
-    if (!actors.player) actors.player = new Character('flame');
-    dyn.add(actors.player.object);
-
-    // 플레이어 위치: 이동해 온 입구 → 저장 위치 → 장면 시작점
-    reach = null;
-    if (world.grid) {
-      const s0 = world.navPoint(info.start) ?? sceneCenter();
-      const w0 = nearestWalkable(world.grid, s0.x, s0.z, s0.y, 40);
-      if (w0) reach = floodReachable(world.grid, w0);
-    }
-    let pose;
-    const saved = state.positions[id];
-    if (state.arrival) pose = arrivalPose(state.arrival);
-    else if (saved) pose = { pos: snapToGrid(new THREE.Vector3(saved.x, saved.y, saved.z)), yaw: saved.yaw };
-    else pose = arrivalPose(info.start);
-    actors.player.position.copy(pose.pos);
-    actors.player.groundY = pose.pos.y;
-    actors.player.setYaw(pose.yaw, true);
+    applyGate();
+    computeReach();
 
     // 주민
-    for (const n of info.npcs) {
-      const pos = markerGround(n.at, n.offset);
+    for (const n of npcsInScene(state, id)) {
+      const pos = markerGround(n.spot.at, n.spot.offset);
       if (!pos) continue;
       const char = new Character(n.model);
       char.position.copy(pos);
       const c = sceneCenter();
       char.setYaw(Math.atan2(c.x - pos.x, c.z - pos.z), true);
-      const mark = markMesh();
+      const mark = markSprite();
       mark.position.y = char.height + 0.45;
       char.object.add(mark);
       dyn.add(char.object);
       char.model.traverse((o) => o.isMesh && clickables.push(o));
-      const npc = { ...n, char, mark, homeYaw: char.yaw };
+      const npc = { ...n, char, mark, homeYaw: char.yaw, home: pos.clone(), resting: !!n.spot.resting, walk: null };
       actors.npcs.push(npc);
-      addSpot({ kind: 'npc', id: n.id, name: n.name, pos, radius: TALK_RADIUS, lift: char.height + 0.3, npc });
+      addSpot({ kind: 'npc', id: n.id, name: n.name, pos: npc.home, radius: TALK_RADIUS, lift: char.height + 0.3, npc, live: () => char.position });
     }
 
-    // 출구
+    // 출구: 빛기둥 관문(문) / 꽃잎 승강대 + 민트 빛기둥 / 해파리 선착장 + 민트 빛기둥
     for (const ex of info.exits) {
       const pos = markerGround(ex.at);
       if (!pos) continue;
-      const ring = new GroundRing({ color: ex.locked ? '#C9B7EE' : '#FFF4DC', radius: 1.3 });
-      ring.mesh.position.copy(pos).add(new THREE.Vector3(0, 0.05, 0));
-      dyn.add(ring.mesh);
-      props.rings.push(ring);
-      if (!ex.locked) {
-        const beacon = new Beacon(ex.dock ? '#B9E6D3' : '#FFF4DC', 3.4);
-        beacon.mesh.position.copy(pos);
-        dyn.add(beacon.mesh);
-        props.beacons.push(beacon);
+      const c = sceneCenter();
+      const yaw = Math.atan2(c.x - pos.x, c.z - pos.z);
+      const door = new LightGate({ label: ex.label, yaw, kind: ex.kind === 'door' ? 'door' : 'lift' });
+      door.object.position.copy(pos);
+      dyn.add(door.object);
+      props.doors.push({ door, ex, pos, walkThrough: ex.kind === 'door' });
+      if (ex.kind === 'lift') {
+        const lift = new PetalLift();
+        lift.object.position.copy(pos);
+        lift.baseY = pos.y;
+        dyn.add(lift.object);
+        props.lifts.set(ex.at, lift);
       }
-      addSpot({ kind: 'exit', id: ex.at, name: ex.label, pos, radius: 2.6, lift: 1.6, exit: ex });
+      addSpot({ kind: 'exit', id: ex.at, name: ex.label, pos, radius: 2.6, lift: 2.2, exit: ex });
     }
 
     // 설치 지점
@@ -435,35 +744,84 @@ async function boot() {
       const pos = markerGround(sl.at, sl.offset);
       if (!pos) continue;
       const ring = new GroundRing({ color: '#FFD0A9', radius: 0.8 });
-      ring.mesh.position.copy(pos).add(new THREE.Vector3(0, 0.05, 0));
+      ring.mesh.position.copy(pos).add(V3(0, 0.05, 0));
       dyn.add(ring.mesh);
-      const entry = { slot: sl, pos, ring, prop: null };
+      const entry = { slot: sl, pos, ring, prop: null, lamp: null };
+      if (sl.id === 'lantern') {
+        const lamp = new Lantern();
+        lamp.object.position.copy(pos).add(V3(0.9, 0, 0.3));
+        dyn.add(lamp.object);
+        entry.lamp = lamp;
+      }
       props.slots.set(sl.id, entry);
       addSpot({ kind: 'slot', id: sl.id, name: sl.label, pos, radius: 2.2, lift: 1.5, slot: sl });
     }
 
-    // 산책로의 잠든 봉오리
-    for (const name of info.sleepers ?? []) {
-      const pos = markerGround(name);
-      if (!pos) continue;
-      const prop = new LightProp({ form: 'flower', color: 'cream', motion: 'slowpulse', brightness: 70 });
-      prop.object.position.copy(pos);
-      prop.object.visible = false;
-      dyn.add(prop.object);
-      props.sleepers.push(prop);
+    // 박자 어긋난 등불·복원 뒤 켜질 등불·접힌 다리
+    for (const name of [...(info.offbeat ?? []), ...(info.later ?? [])]) {
+      const raw = markerRaw(name);
+      if (!raw) continue;
+      const lamp = new Lantern();
+      lamp.object.position.copy(snapToGrid(raw));
+      dyn.add(lamp.object);
+      props.lanterns.set(name, lamp);
+    }
+    if (info.gate) {
+      const pts = info.gate.path.map((n) => markerRaw(n)).filter(Boolean);
+      if (pts.length > 1) {
+        const gate = new BridgeGate(pts);
+        dyn.add(gate.object);
+        props.gate = gate;
+      }
+      const lanternSpot = props.slots.get('lantern');
+      if (lanternSpot) addSpot({ kind: 'tune', id: 'tune', name: '어긋난 등불', pos: lanternSpot.pos, radius: 3, lift: 2.2 });
+    }
+    if (info.bud) {
+      const pos = markerGround(info.bud.at, info.bud.offset);
+      if (pos) {
+        const bud = new SleepingBud();
+        bud.object.position.copy(pos);
+        dyn.add(bud.object);
+        props.bud = { bud, pos };
+        addSpot({ kind: 'bud', id: 'bud', name: '닫힌 빛 봉오리', pos, radius: 2.4, lift: 1.4 });
+        info.bud.glimmers.forEach((off, i) => {
+          const gp = snapToGrid(pos.clone().add(V3(off[0], 0, off[1])));
+          const g = new Glimmer('#B9E6D3');
+          g.object.position.copy(gp).add(V3(0, 0.6, 0));
+          dyn.add(g.object);
+          props.glimmers.push({ g, pos: gp, i });
+          addSpot({ kind: 'glimmer', id: `glimmer${i}`, name: '반짝이는 빛', pos: gp, radius: 1.8, lift: 1.0, index: i });
+        });
+      }
     }
 
     // 작업대
     if (info.workbench) {
       const m = world.navPoint(info.workbench.at);
-      const stand = markerGround(info.workbench.at, [0, 0]);
-      const top = m ? new THREE.Vector3(m.x, m.y + 0.2, m.z) : stand;
-      const prev = new LightProp({ ...state.draft }, { preview: false });
-      prev.object.position.copy(top).add(new THREE.Vector3(0, -1.0, 0));
-      prev.object.scale.setScalar(0.8);
+      const stand = markerGround(info.workbench.at);
+      const top = m ? V3(m.x, m.y + 0.2, m.z) : stand;
+      const prev = new LightProp({ ...state.draft }, { preview: true });
+      prev.object.position.copy(top).add(V3(0, -0.9, 0));
+      prev.object.scale.setScalar(0.9);
       dyn.add(prev.object);
-      props.workbenchPreview = prev;
+      props.benchPreview = prev;
       addSpot({ kind: 'workbench', id: 'workbench', name: info.workbench.label, pos: stand, radius: 2.6, lift: 1.3, top });
+    }
+
+    // 항해 나무
+    if (info.organ) {
+      const pos = markerGround(info.organ.at, [0, 3.2]);
+      const tree = world.navPoint(info.organ.at);
+      if (pos && tree) {
+        addSpot({ kind: 'organ', id: 'organ', name: info.organ.label, pos, radius: 3, lift: 2.4 });
+        const c = sceneCenter();
+        const flowPts = [pos.clone().add(V3(0, 1.2, 0)), tree.clone().add(V3(0, 2.5, 0)), tree.clone().add(V3(0, 7, 0)), tree.clone().add(V3(-10, 14, 6)), c.clone().add(V3(-22, 9, 0)), c.clone().add(V3(-28, -4, -4))];
+        const flowR = flowPts.map((p, i) => (i >= 3 ? V3(2 * tree.x - p.x, p.y, p.z) : p.clone()));
+        const f1 = new LightFlow(flowPts, '#FFD0A9', 18);
+        const f2 = new LightFlow(flowR, '#B9E6D3', 18);
+        dyn.add(f1.object, f2.object);
+        props.flows.push(f1, f2);
+      }
     }
 
     // 발견물
@@ -483,50 +841,78 @@ async function boot() {
       addSpot({ kind: 'discovery', id: d.id, name: d.label, pos, radius: 2.0, lift: 1.2 });
     }
 
-    // 노래하는 결정
-    if (info.puzzle) {
+    // 노래하는 결정(선택형)
+    if (info.puzzle && info.puzzle.showWhen(state)) {
       const center = markerGround(info.puzzle.at);
       if (center) {
-        const standPos = center.clone();
         [-2, 0, 2].forEach((dx, i) => {
-          const pos = snapToGrid(center.clone().add(new THREE.Vector3(dx * 0.9, 0, -1.6 - Math.abs(dx) * 0.2)));
+          const pos = snapToGrid(center.clone().add(V3(dx * 0.9, 0, -1.6 - Math.abs(dx) * 0.2)));
           const c = new SongCrystal(i, 1.3 + (i === 1 ? 0.4 : 0));
           c.object.position.copy(pos);
           dyn.add(c.object);
           props.crystals.push(c);
           c.meshes.forEach((m) => clickables.push(m));
         });
-        addSpot({ kind: 'puzzle', id: 'puzzle', name: info.puzzle.label, pos: standPos, radius: 3.2, lift: 2.2 });
+        addSpot({ kind: 'puzzle', id: 'puzzle', name: info.puzzle.label, pos: center, radius: 3.2, lift: 2.2 });
       }
     }
-
     follow.colliders = world.colliders;
-    follow.snap(actors.player.position, pose.yaw + Math.PI);
     syncProps();
     if (params.has('debug')) drawDebugGrid();
+  }
 
-    // 첫 프레임을 한 번 그려 셰이더를 준비한 뒤 가림막을 연다
+  async function enterScene({ label } = {}) {
+    view.mode = 'loading';
+    closePanel(true);
+    bubble.hide();
+    prompt.update(null);
+    keys.clear();
+    path = null;
+    refresh();
+    const id = state.scene;
+    const info = SCENE_INFO[id];
+    fader.show(label ?? `${info.name}(으)로 가는 중…`);
+    try {
+      await buildScene(id, (p) => fader.progress(p));
+    } catch (err) {
+      console.error(err);
+      fader.show(`장면을 불러오지 못했어요. 새로고침하면 안전한 자리에서 다시 시작해요. (${err.message})`);
+      return false;
+    }
+    if (!actors.player) buildPlayer();
+    world.dynamic.add(actors.player.object);
+    let pose;
+    const saved = state.positions[id];
+    if (state.arrival) pose = arrivalPose(state.arrival);
+    else if (saved) pose = { pos: snapToGrid(V3(saved.x, saved.y, saved.z)), yaw: saved.yaw };
+    else pose = arrivalPose(info.start);
+    actors.player.position.copy(pose.pos);
+    actors.player.groundY = pose.pos.y;
+    actors.player.setYaw(pose.yaw, true);
+    follow.snap(actors.player.position, pose.yaw + Math.PI);
     renderer.compile(scene3, camera);
     view.puzzle = createPuzzle();
     view.mode = 'play';
+    view.arrivedAt = performance.now();
     commitPosition();
     fader.hide();
     refresh();
+    return true;
   }
 
-  /** 게임 상태 → 공간 요소(설치된 빛, 미리보기, 발견물, 봉오리) */
+  /** 게임 상태 → 공간 요소 */
   function syncProps() {
     if (!world.root) return;
     for (const [id, entry] of props.slots) {
+      const visible = entry.slot.showWhen(state);
+      entry.ring.mesh.visible = visible;
       const light = lightAt(state, id);
       if (light) {
         if (!entry.prop) {
           entry.prop = new LightProp(light);
           entry.prop.object.position.copy(entry.pos);
           world.dynamic.add(entry.prop.object);
-        } else if (JSON.stringify(entry.prop.light) !== JSON.stringify(light)) {
-          entry.prop.set(light);
-        }
+        } else if (JSON.stringify(entry.prop.light) !== JSON.stringify(light)) entry.prop.set(light);
       } else if (entry.prop) {
         entry.prop.dispose();
         entry.prop = null;
@@ -534,43 +920,177 @@ async function boot() {
       const av = slotAvailability(state, id);
       entry.ring.strength = av.canPlace ? 1 : light ? 0.25 : 0.15;
       entry.ring.setColor(av.canPlace ? '#FFD0A9' : '#C9B7EE');
+      if (entry.lamp) entry.lamp.state = light ? 'on' : 'off';
+      const spot = spots.find((s) => s.kind === 'slot' && s.id === id);
+      if (spot) spot.disabled = !visible;
     }
-    // 설치 미리보기: 빛 놓기 패널이 열린 빈 자리
     const pid = view.panel?.kind === 'slot' ? view.panel.id : null;
     const pe = pid ? props.slots.get(pid) : null;
-    if (pe && !lightAt(state, pid) && slotAvailability(state, pid).canPlace) {
+    const carried = carriedLights(state).filter((l) => l.origin === 'crafted');
+    if (pe && !lightAt(state, pid) && slotAvailability(state, pid).canPlace && carried.length) {
+      const L = carried[carried.length - 1];
       if (!props.preview) {
-        props.preview = new LightProp({ ...state.draft }, { preview: true });
+        props.preview = new LightProp(L, { preview: true });
         world.dynamic.add(props.preview.object);
-      } else props.preview.set({ ...state.draft });
+      } else props.preview.set(L);
       props.preview.object.position.copy(pe.pos);
     } else if (props.preview) {
       props.preview.dispose();
       props.preview = null;
     }
-    props.workbenchPreview?.set({ ...state.draft });
+    props.benchPreview?.set({ ...state.draft });
+    if (props.benchPreview) props.benchPreview.object.visible = state.world.benchOpened;
+    // 등불·다리
+    const info = SCENE_INFO[world.id];
+    const W = state.world;
+    for (const name of info?.offbeat ?? []) {
+      const l = props.lanterns.get(name);
+      if (l && !(view.panel?.kind === 'tune')) l.state = W.tuned ? 'on' : lightAt(state, 'lantern') ? 'offbeat' : 'off';
+    }
+    for (const name of info?.later ?? []) {
+      const l = props.lanterns.get(name);
+      if (l) l.state = W.bridgeRestored ? 'on' : 'off';
+    }
+    if (props.gate && !cinematic) props.gate.setRestored(W.bridgeRestored);
+    const tuneSpot = spots.find((s) => s.kind === 'tune');
+    if (tuneSpot) tuneSpot.disabled = !(state.quests.q02 === 'active' && lightAt(state, 'lantern') && !W.tuned);
+    // 교환 정원
+    if (props.bud) props.bud.bud.awake = W.budAwake;
+    const budSpot = spots.find((s) => s.kind === 'bud');
+    if (budSpot) budSpot.disabled = W.budAwake || state.quests.q03 !== 'active' || view.glimmersFound.size < props.glimmers.length;
+    for (const gl of props.glimmers) {
+      gl.g.found = W.budAwake || view.glimmersFound.has(gl.i);
+      const s = spots.find((x) => x.id === `glimmer${gl.i}`);
+      if (s) s.disabled = gl.g.found || state.quests.q03 !== 'active';
+      gl.g.object.visible = state.quests.q03 === 'active' && !gl.g.found;
+    }
     for (const [id, d] of props.discoveries) {
       const found = isDiscovered(state, id);
       d.group.visible = !found;
       const spot = spots.find((s) => s.kind === 'discovery' && s.id === id);
       if (spot) spot.disabled = found;
     }
-    const awake = state.quests.finale === 'claimed';
-    props.sleepers.forEach((p) => (p.object.visible = awake));
+    for (const { door, ex } of props.doors) door.locked = !!ex.lockedUntil?.(state);
+  }
+
+  // ------------------------------------------------------------------ 안내
+  function currentHint() {
+    if (!settings.hints || view.mode !== 'play') return null;
+    const S = state;
+    const W = S.world;
+    const t = S.tutorial.done;
+    const sc = S.scene;
+    if (S.quests.q01 === 'active') {
+      if (sc !== 'workshop') return '빛 제작실로 돌아가 **둥근 작업대**에서 첫 빛을 완성해요';
+      if (!t.includes('move')) return '**WASD·방향키**나 **바닥 클릭**으로 걸어 봐요';
+      if (!t.includes('look')) return '**드래그**로 둘러봐요 · 창밖에 멈춘 해파리 산책로가 보여요';
+      if (!W.benchOpened) return '둥근 작업대에 다가가 **E**로 잠든 빛을 깨워요';
+      return view.panel?.kind === 'craft' ? '**색**을 고르고 **첫 빛 완성하기**를 눌러요' : '작업대에서 **E**를 눌러 첫 빛을 완성해요';
+    }
+    if (S.quests.q02 === 'available') return sc === 'workshop' ? '**빛기둥 문**으로 나가 캡슐 마을의 살구를 만나요' : sc === 'neighborhood' ? '촉수 다리 문 앞의 **살구**와 이야기해요' : null;
+    if (S.quests.q02 === 'active') {
+      if (sc !== 'walkway') return '**촉수 다리**로 가요 · 살구가 첫 등불 앞에서 기다려요';
+      if (!S.slots.lantern) return '첫 등불에 다가가 **E**로 내 빛을 놓아요';
+      if (!W.tuned) return view.panel?.kind === 'tune' ? '등불이 **가장 밝을 때 E**를 눌러요' : '등불 앞에서 **E**로 어긋난 박자를 맞춰요';
+      return null;
+    }
+    if (S.quests.q02 === 'completed') return '다리를 건너 **살구**에게 알려요';
+    if (S.quests.q03 === 'available') return sc === 'walkway' ? '다리 건너 교환 정원의 **리본**과 이야기해요' : '촉수 다리를 건너 **리본**을 만나요';
+    if (S.quests.q03 === 'active') {
+      if (!W.budAwake) return view.glimmersFound.size < props.glimmers.length ? `봉오리 주변의 **반짝임**을 살펴요 (${view.glimmersFound.size} / 3)` : '닫힌 봉오리에 다가가 **E**로 깨워요';
+      if (!W.traded) return '**리본**에게 말해 빛을 나눠요';
+      if (!W.woven) return '**리본**에게 말해 두 빛을 엮어요';
+    }
+    if (S.quests.q03 === 'completed') return '**리본**에게 엮은 빛을 보여 줘요';
+    if (S.quests.q04 === 'available') return sc === 'overlook' ? '항해사 **보라**와 이야기해요' : '**꽃잎 승강대**를 타고 항해 전망대로 올라가요';
+    if (S.quests.q04 === 'active' && !isDestination(sc)) {
+      if (!W.organFed) return '**항해 나무** 앞에서 **E**로 엮은 빛을 보내요';
+      if (!W.route) return '항해 나무에서 **항로**를 골라요';
+      return '항해 나무에서 **출항**해요';
+    }
+    if (W.chapterDone && isDestination(sc)) {
+      const d = (SCENE_INFO[sc].discoveries ?? []).find((x) => !isDiscovered(S, x.id));
+      return d ? `반짝이는 **${d.label}**의 빛을 찾아봐요` : '선착장에서 **해파리로 돌아가요**';
+    }
+    return null;
+  }
+
+  /** 안내 빛이 날아갈 현재 목표 지점 */
+  function hintTarget() {
+    const S = state;
+    const W = S.world;
+    const find = (kind, id) => spots.find((s) => s.kind === kind && (id === undefined || s.id === id) && !s.disabled);
+    if (S.quests.q01 === 'active') return S.scene === 'workshop' ? find('workbench') : find('exit', 'ENTRY_정원_교환광장');
+    if (S.quests.q02 === 'available') return find('npc', 'salgu') ?? find('exit', S.scene === 'workshop' ? 'ENTRY_정원_교환광장' : 'EXIT_촉수산책로');
+    if (S.quests.q02 === 'active') return S.scene === 'walkway' ? (S.slots.lantern ? find('tune') : find('slot', 'lantern')) : find('exit', 'EXIT_촉수산책로') ?? find('exit', 'ENTRY_정원_교환광장');
+    if (S.quests.q02 === 'completed') return find('npc', 'salgu');
+    if (S.quests.q03 === 'available' || (S.quests.q03 === 'active' && W.budAwake) || S.quests.q03 === 'completed') return find('npc', 'ribbon');
+    if (S.quests.q03 === 'active') return props.glimmers.find((g) => !view.glimmersFound.has(g.i)) ? find('glimmer', `glimmer${props.glimmers.find((g) => !view.glimmersFound.has(g.i)).i}`) : find('bud');
+    if (S.quests.q04 === 'available') return find('npc', 'bora') ?? find('exit', 'EXIT_전망대_항해정원');
+    if (S.quests.q04 === 'active') return find('organ');
+    if (W.chapterDone && isDestination(S.scene)) return find('discovery') ?? find('exit');
+    return null;
+  }
+
+  // ------------------------------------------------------------------ 길 안내(목표 핀·방향 화살표·바닥 빛 길)
+  function hideGuide() {
+    objMarker.set(null);
+    trail.setRoute(null);
+    pointer2d.update(null);
+    guideState.key = '';
+  }
+
+  function updateGuide() {
+    if (!settings.guide || !actors.player) return hideGuide();
+    const target = guideTarget(state);
+    const spot = target && spots.find((s) => s.kind === target.kind && s.id === target.id && !s.disabled);
+    // 목표 대상 패널을 열고 있으면 안내는 잠시 숨긴다
+    const busy = view.panel && ((view.panel.kind === 'craft' && target?.kind === 'workbench') || view.panel.kind === 'tune' || (view.panel.kind === 'slot' && target?.id === view.panel.id));
+    if (!spot || busy) return hideGuide();
+    const pos = spot.live ? spot.live() : spot.pos;
+    const p = actors.player.position;
+    const distance = Math.hypot(pos.x - p.x, pos.z - p.z);
+    objMarker.set(pos, spot.lift ?? 2);
+    // 바닥 빛 길: 목표가 바뀌거나 0.6초마다 다시 계산(가까우면 생략)
+    const key = `${state.scene}:${target.kind}:${target.id}`;
+    const now = performance.now();
+    if (distance < 3) trail.setRoute(null);
+    else if (key !== guideState.key || now - guideState.routeAt > 600) {
+      guideState.key = key;
+      guideState.routeAt = now;
+      if (world.grid) {
+        const from = { x: p.x, y: actors.player.groundY ?? p.y, z: p.z };
+        let route = findPath(world.grid, from, snapToGrid(pos), 200000);
+        if (!route) {
+          const near = nearestWalkable(world.grid, from.x, from.z, from.y, 4);
+          if (near) route = findPath(world.grid, near, snapToGrid(pos), 200000);
+        }
+        trail.setRoute(route ? [V3(p.x, from.y, p.z), ...route.slice(1).map((r) => V3(r.x, r.y, r.z))] : null);
+      }
+    }
+    // 화면 표시: 목표 머리 위 이름·거리, 화면 밖이면 가장자리 화살표
+    _v.set(pos.x, pos.y + (spot.lift ?? 2) + 0.6, pos.z).project(camera);
+    const behind = _v.z > 1;
+    const label = target.final ? target.label : `${target.label} · ${target.towards?.label ?? ''}`.replace(/ · $/, '');
+    pointer2d.update({ x: ((_v.x + 1) / 2) * stage.W, y: ((1 - _v.y) / 2) * stage.H, behind, W: stage.W, H: stage.H, label, distance });
+  }
+
+  function markLook(amount) {
+    view.lookYaw += Math.abs(amount);
+    if (view.lookYaw > 0.8) dispatchTutorial('look');
   }
 
   // ------------------------------------------------------------------ 상호작용
-
   function nearestTarget() {
     const p = actors.player.position;
     let best = null;
     let bestD = Infinity;
     for (const s of spots) {
       if (s.disabled) continue;
-      const d = Math.hypot(s.pos.x - p.x, s.pos.z - p.z);
-      if (d > s.radius || Math.abs(s.pos.y - p.y) > 2.2) continue;
-      // 주민을 설치 지점보다 조금 우선
-      const score = d - (s.kind === 'npc' ? 0.6 : 0);
+      const sp = s.live ? s.live() : s.pos;
+      const d = Math.hypot(sp.x - p.x, sp.z - p.z);
+      if (d > s.radius || Math.abs(sp.y - p.y) > 2.2) continue;
+      const score = d - (s.kind === 'npc' ? 0.6 : 0) - (s.kind === 'tune' ? 0.3 : 0);
       if (score < bestD) {
         bestD = score;
         best = s;
@@ -579,168 +1099,609 @@ async function boot() {
     if (!best) return null;
     let verb = '살펴보기';
     let locked = false;
-    if (best.kind === 'npc') verb = best.npc.decorative ? '인사하기' : '이야기하기';
-    if (best.kind === 'slot') verb = lightAt(state, best.id) ? '빛 살펴보기' : '빛 놓기';
-    if (best.kind === 'workbench') verb = '빛 빚기';
-    if (best.kind === 'discovery') verb = '빛의 흔적 살피기';
-    if (best.kind === 'puzzle') verb = '귀 기울이기';
-    if (best.kind === 'exit') {
-      locked = !!best.exit.locked;
-      verb = locked ? '닫혀 있어요' : best.exit.dock ? '해파리 타기' : '이동하기';
+    const W = state.world;
+    if (best.kind === 'npc') verb = '이야기하기';
+    if (best.kind === 'slot') {
+      if (best.id === 'lantern' && W.tuned) return null;
+      verb = lightAt(state, best.id) ? '빛 살펴보기' : '빛 놓기';
     }
-    return { ...best, verb, locked, anchor: project(best.pos, best.lift) };
+    if (best.kind === 'tune') verb = '박자 맞추기';
+    if (best.kind === 'workbench') verb = state.world.benchOpened ? '빛 빚기' : '잠든 빛 깨우기';
+    if (best.kind === 'discovery') verb = '빛의 흔적 살피기';
+    if (best.kind === 'glimmer') verb = '반짝임 살피기';
+    if (best.kind === 'bud') verb = '봉오리 깨우기';
+    if (best.kind === 'puzzle') verb = '귀 기울이기';
+    if (best.kind === 'organ') {
+      const Q = state.quests.q04;
+      if (Q === 'active' && !W.organFed) verb = '엮은 빛 보내기';
+      else if (W.organFed && (!W.route || W.chapterDone)) verb = '항로 고르기';
+      else if (W.organFed && W.route) verb = '출항하기';
+      else verb = '살펴보기';
+    }
+    if (best.kind === 'exit') {
+      const why = best.exit.lockedUntil?.(state);
+      locked = !!why;
+      verb = locked ? '닫혀 있어요' : best.exit.kind === 'dock' ? '해파리 타기' : best.exit.kind === 'lift' ? '승강대 타기' : '문 지나가기';
+    }
+    const sp = best.live ? best.live() : best.pos;
+    return { ...best, verb, locked, anchor: project(sp, best.lift) };
   }
 
   function interactWith(t) {
     if (view.mode !== 'play') return;
     path = null;
     const player = actors.player;
-    player.faceTowards(t.pos.x, t.pos.z);
-    if (t.kind === 'npc') {
-      const npc = t.npc;
-      npc.char.faceTowards(player.position.x, player.position.z);
-      npc.char.greet();
-      if (npc.decorative) {
-        bubble.show(`${npc.name}: ${NPC_LINES.idle[npc.id]}`, () => project(npc.char.position, npc.char.height + 0.2));
-        return;
+    const tp = t.live ? t.live() : t.pos;
+    player.faceTowards(tp.x, tp.z);
+    const W = state.world;
+    switch (t.kind) {
+      case 'npc':
+        talkTo(t.id);
+        break;
+      case 'slot':
+        view.panel = { kind: 'slot', id: t.id };
+        syncProps();
+        refresh();
+        slotPanel.el.querySelector('.btn-primary:not([disabled]):not([hidden]), .btn:not([disabled]):not([hidden])')?.focus({ preventScroll: true });
+        break;
+      case 'workbench':
+        if (!W.benchOpened) {
+          dispatch({ type: 'openBench' });
+          sparkles.burst(t.top.clone(), 18, settings.reducedMotion);
+          chime(1046.5, 0.7, 0.08);
+        }
+        view.panel = { kind: 'craft', id: 'workbench' };
+        refresh();
+        craftPanel.el.querySelector('.chip.is-selected')?.focus({ preventScroll: true });
+        break;
+      case 'tune':
+        openTuning();
+        break;
+      case 'glimmer':
+        view.glimmersFound.add(t.index);
+        sparkles.burst(tp.clone().add(V3(0, 0.6, 0)), 12, settings.reducedMotion);
+        chime(659.25 + t.index * 98, 0.5, 0.09);
+        view.lastProgress = performance.now();
+        syncProps();
+        refresh();
+        if (view.glimmersFound.size === props.glimmers.length) toast.show('세 반짝임이 봉오리와 같은 박자로 숨 쉬어요. 이제 봉오리를 깨워요.');
+        break;
+      case 'bud':
+        if (dispatch({ type: 'wakeBud' })) {
+          sparkles.burst(tp.clone().add(V3(0, 1, 0)), 30, settings.reducedMotion);
+          chime(783.99, 0.9, 0.12);
+          setTimeout(() => talkTo('ribbon'), 1400);
+        }
+        break;
+      case 'organ':
+        useOrgan();
+        break;
+      case 'discovery':
+        if (dispatch({ type: 'discover', id: t.id })) {
+          sparkles.burst(tp.clone().add(V3(0, 0.8, 0)), 30, settings.reducedMotion);
+          chime(783.99, 0.6, 0.1);
+        }
+        break;
+      case 'puzzle':
+        view.panel = { kind: 'puzzle', id: 'puzzle' };
+        refresh();
+        puzzlePanel.el.querySelector('.btn-primary:not([disabled])')?.focus({ preventScroll: true });
+        break;
+      case 'exit': {
+        const ex = t.exit;
+        const why = ex.lockedUntil?.(state);
+        if (why) toast.show(why);
+        else if (ex.kind === 'dock') requestDepart();
+        else if (ex.kind === 'lift') rideLift(ex);
+        else passDoor(ex);
+        break;
       }
-      const questId = questFor(npc.id);
-      if (!questId) {
-        const anyClaimed = QUEST_ORDER.some((id) => QUESTS[id].giver === npc.id && state.quests[id] === 'claimed');
-        bubble.show(`${npc.name}: ${anyClaimed ? NPC_LINES.thanks[npc.id] : NPC_LINES.idle[npc.id]}`, () => project(npc.char.position, npc.char.height + 0.2));
-        return;
-      }
-      closePanel();
-      view.mode = 'modal';
-      modal.show(state, { ...npc, questId }, project(player.position).x, stage.W);
-      refresh();
-    } else if (t.kind === 'slot') {
-      view.panel = { kind: 'slot', id: t.id };
-      syncProps();
-      refresh();
-      slotPanel.el.querySelector('.btn-primary:not([disabled]):not([hidden]), .btn:not([disabled]):not([hidden])')?.focus({ preventScroll: true });
-    } else if (t.kind === 'workbench') {
-      view.panel = { kind: 'craft', id: 'workbench' };
-      refresh();
-      craftPanel.el.querySelector('.chip.is-selected')?.focus({ preventScroll: true });
-    } else if (t.kind === 'puzzle') {
-      view.panel = { kind: 'puzzle', id: 'puzzle' };
-      if (state.quests.song === 'available') toast.show('리본이 무언가 부탁하고 싶어 해요.');
-      refresh();
-      puzzlePanel.el.querySelector('.btn-primary:not([disabled])')?.focus({ preventScroll: true });
-    } else if (t.kind === 'discovery') {
-      if (dispatch({ type: 'discover', id: t.id })) {
-        sparkles.burst(t.pos.clone().add(new THREE.Vector3(0, 0.8, 0)), 30, reducedMotion);
-        chime(783.99, 0.6, 0.1);
-      }
-    } else if (t.kind === 'exit') {
-      const ex = t.exit;
-      if (ex.locked) toast.show(ex.locked);
-      else if (ex.dock) requestDepart();
-      else travel(ex.at);
+      default:
     }
   }
 
-  async function travel(via) {
-    commitPosition();
-    const target = SCENE_INFO[state.scene];
-    if (!dispatch({ type: 'travel', via })) return;
-    await enterScene({ label: `${SCENE_INFO[state.scene].name}(으)로 가는 중…` });
-    toast.show(`${SCENE_INFO[state.scene].name}에 왔어요.`);
-    void target;
-  }
-
-  function closePanel(silent = false) {
-    if (view.panel?.kind === 'puzzle' && view.puzzle.status === 'listening') {
-      playToken += 1;
-      view.puzzle = { ...view.puzzle, status: 'idle' };
-    }
-    view.panel = null;
-    if (!silent) {
-      syncProps();
-      refresh();
-    }
-  }
-
-  function closeModal() {
-    if (!modal.open) return;
-    modal.hide();
-    view.mode = 'play';
+  // ------------------------------------------------------------------ 대화
+  function talkTo(npcId) {
+    const npc = actors.npcs.find((n) => n.id === npcId);
+    if (!npc || !['play', 'dialogue'].includes(view.mode)) return;
+    closePanel(true);
+    path = null;
+    npc.char.faceTowards(actors.player.position.x, actors.player.position.z);
+    npc.char.greet();
+    dispatch({ type: 'meet', npc: npcId });
+    const lines = dialogueFor(state, npcId, { name: npc.name });
+    view.mode = 'dialogue';
+    dialogue.play({
+      steps: lines.map((l) => ({
+        speaker: l.speaker,
+        portrait: portraitFor(npcId),
+        text: l.text,
+        choices: l.choices?.map((c) => ({ label: c.label, primary: c.primary, onPick: () => setTimeout(() => runAct(c.act, npc), 0) })),
+      })),
+    });
     refresh();
   }
 
-  // ------------------------------------------------------------------ 항해
+  function say(npc, text, then) {
+    view.mode = 'dialogue';
+    dialogue.play({ steps: [{ speaker: npc.name, portrait: portraitFor(npc.id), text }], onClose: then });
+    refresh();
+  }
 
-  let voyagePromise = null;
+  function runAct(act, npc) {
+    if (!act || act === 'close') return;
+    const [verb, arg] = act.split(':');
+    if (verb === 'q02') {
+      dispatch({ type: 'acceptQuest', id: 'q02' });
+      say(npc, BRANCH_LINES[act], () => {
+        if (arg === 'guide' || arg === 'together') {
+          // 주민이 문제 지점(다리 문)까지 먼저 걸어가 안내한다
+          const exitSpot = spots.find((s) => s.kind === 'exit' && s.id === 'EXIT_촉수산책로');
+          if (exitSpot) npcWalk(npc, exitSpot.pos, () => (npc.char.object.visible = false));
+          if (arg === 'together') view.companion = npc.id;
+        }
+        const exitSpot = spots.find((s) => s.kind === 'exit' && s.id === 'EXIT_촉수산책로');
+        if (exitSpot && settings.hints) wisp.fly(actors.player.position, exitSpot.pos);
+      });
+      return;
+    }
+    if (verb === 'accept') {
+      dispatch({ type: 'acceptQuest', id: arg });
+      if (arg === 'q04') toast.show('항해 나무 앞에 서서 엮은 빛을 보내요.');
+      return;
+    }
+    if (verb === 'claim') {
+      if (dispatch({ type: 'claimReward', id: arg })) {
+        sparkles.burst(npc.char.position.clone().add(V3(0, 1.3, 0)), 20, settings.reducedMotion);
+        if (arg === 'q02') setTimeout(() => toast.show('다리 건너 교환 정원에서 살구의 친구 리본이 기다려요.', 4500), 1500);
+      }
+      return;
+    }
+    if (verb === 'ribbon') {
+      say(npc, BRANCH_LINES[act], () => talkTo('ribbon'));
+      return;
+    }
+    if (verb === 'tune') return openTuning();
+    if (verb === 'trade') {
+      const mine = state.lights.find((l) => l.origin === 'crafted');
+      if (!mine) return toast.show('내 빛이 있어야 나눌 수 있어요.');
+      exchangeMode = 'trade';
+      view.mode = 'panel-modal';
+      exchange.showTrade(mine);
+      refresh();
+      return;
+    }
+    if (verb === 'weave') {
+      const mine = state.lights.find((l) => l.origin === 'crafted');
+      if (!mine) return;
+      exchangeMode = 'weave';
+      view.mode = 'panel-modal';
+      exchange.showWeave(mine);
+      refresh();
+      return;
+    }
+    if (verb === 'route') return openRoutes();
+    if (verb === 'depart') return startVoyage();
+    if (verb === 'companion') {
+      if (dispatch({ type: 'walkTogether', npc: arg })) {
+        view.companion = arg;
+        toast.show(`${npc.name}와 함께 걸어요. 다른 곳으로 이동하면 제자리로 돌아가요.`);
+      }
+      return;
+    }
+    if (verb === 'showLight') {
+      const l = carriedLights(state)[0] ?? lightAt(state, 'lantern');
+      say(npc, l ? `와, ${lightName(l)}! 네 빛은 볼 때마다 조금씩 다른 박자로 숨 쉬는 것 같아.` : '다음에 새로 빚은 빛을 보여 줘!');
+    }
+  }
+
+  function npcWalk(npc, goal, done) {
+    if (!world.grid) return;
+    const from = { x: npc.char.position.x, y: npc.char.position.y, z: npc.char.position.z };
+    const route = findPath(world.grid, from, goal, 400000);
+    if (!route) return done?.();
+    npc.walk = { pts: route.slice(1).map((p) => V3(p.x, p.y, p.z)), done };
+  }
+
+  // ------------------------------------------------------------------ 등불 조율과 다리 복원
+  function openTuning() {
+    if (!(state.quests.q02 === 'active' && lightAt(state, 'lantern') && !state.world.tuned)) return;
+    view.tuning = tuneStart(createTuning(SCENE_INFO.walkway.offbeat.length), time);
+    view.panel = { kind: 'tune', id: 'tune' };
+    const first = props.lanterns.get(SCENE_INFO.walkway.offbeat[0]);
+    if (first) follow.autoYaw = Math.atan2(actors.player.position.x - first.object.position.x, actors.player.position.z - first.object.position.z);
+    refresh();
+    tuningPanel.el.querySelector('.tune-hit')?.focus({ preventScroll: true });
+  }
+
+  function finishTuning(assisted) {
+    view.panel = null;
+    view.tuning = null;
+    dispatch({ type: 'tuned', assisted });
+    dispatchTutorial('tune');
+    playBridgeRestoration();
+  }
+
+  function playBridgeRestoration() {
+    const gate = props.gate;
+    if (!gate) {
+      dispatch({ type: 'restoreBridge' });
+      return;
+    }
+    view.mode = 'cinematic';
+    closePanel(true);
+    refresh();
+    const dur = settings.reducedMotion ? 1.2 : 3.8;
+    let t = 0;
+    const lamps = [...SCENE_INFO.walkway.offbeat, ...SCENE_INFO.walkway.later].map((n) => props.lanterns.get(n)).filter(Boolean);
+    const salgu = actors.npcs.find((n) => n.id === 'salgu');
+    const look = gate.pointAt(0.35);
+    follow.autoYaw = Math.atan2(actors.player.position.x - look.x, actors.player.position.z - look.z);
+    hint.set(null);
+    cinematic = {
+      update(dt) {
+        t += dt;
+        gate.progress = Math.min(1, t / dur);
+        gate.apply(time);
+        lamps.forEach((l, i) => {
+          if (gate.progress > (i + 1) / (lamps.length + 1) && l.state !== 'on') {
+            l.state = 'on';
+            l.flash = 1;
+            chime(523.25 + i * 90, 0.6, 0.08);
+          }
+        });
+        if (t >= dur) this.finish();
+      },
+      finish() {
+        cinematic = null;
+        gate.progress = 1;
+        gate.apply(time);
+        dispatch({ type: 'restoreBridge' });
+        applyGate();
+        computeReach();
+        view.mode = 'play';
+        refresh();
+        banner.show('길이 깨어났어요', '촉수 다리가 펼쳐졌어요', '살구가 먼저 건너가 기다려요. 직접 걸어서 건너 보세요.', 4800);
+        if (salgu) {
+          const ahead = snapToGrid(gate.pointAt(0.3));
+          npcWalk(salgu, ahead, () => {
+            salgu.home = salgu.char.position.clone();
+            salgu.homeYaw = Math.atan2(actors.player.position.x - salgu.home.x, actors.player.position.z - salgu.home.z);
+          });
+        }
+      },
+      skip() {
+        this.finish();
+      },
+    };
+  }
+
+  function playTradeAnimation() {
+    const ribbon = actors.npcs.find((n) => n.id === 'ribbon');
+    const mine = state.lights.find((l) => l.origin === 'crafted');
+    if (!ribbon || !mine) return;
+    const a = new LightProp({ ...mine, brightness: 90 }, { preview: true });
+    const b = new LightProp({ form: 'orb', color: 'mint', motion: 'float', brightness: 90 }, { preview: true });
+    a.object.scale.setScalar(0.6);
+    b.object.scale.setScalar(0.6);
+    world.dynamic.add(a.object, b.object);
+    const pa = actors.player.position.clone().add(V3(0, 0.2, 0));
+    const pb = ribbon.char.position.clone().add(V3(0, 0.2, 0));
+    let t = 0;
+    const dur = settings.reducedMotion ? 0.6 : 1.8;
+    view.mode = 'cinematic';
+    refresh();
+    ribbon.char.greet();
+    actors.player.greet();
+    cinematic = {
+      update(dt) {
+        t += dt;
+        const k = Math.min(1, t / dur);
+        const e = k * k * (3 - 2 * k);
+        a.object.position.lerpVectors(pa, pb, e).add(V3(0, Math.sin(e * Math.PI) * 0.8, 0));
+        b.object.position.lerpVectors(pb, pa, e).add(V3(0, Math.sin(e * Math.PI) * 0.8, 0));
+        a.update(time);
+        b.update(time);
+        if (k >= 1) this.finish();
+      },
+      finish() {
+        cinematic = null;
+        a.dispose();
+        b.dispose();
+        sparkles.burst(pa.clone().add(V3(0, 1, 0)), 16, settings.reducedMotion);
+        view.mode = 'play';
+        refresh();
+        talkTo('ribbon');
+      },
+      skip() {
+        this.finish();
+      },
+    };
+  }
+
+  // ------------------------------------------------------------------ 항해 나무·항로·항해
+  function useOrgan() {
+    const W = state.world;
+    if (state.quests.q04 === 'active' && !W.organFed) {
+      if (!dispatch({ type: 'feedOrgan' })) return;
+      props.flows.forEach((f) => f.start(settings.reducedMotion ? 1.5 : 4.5));
+      chime(523.25, 1.2, 0.1);
+      setTimeout(() => chime(659.25, 1.2, 0.1), 500);
+      setTimeout(() => chime(783.99, 1.4, 0.1), 1000);
+      follow.autoYaw = follow.yaw;
+      setTimeout(() => {
+        const bora = actors.npcs.find((n) => n.id === 'bora');
+        if (bora && view.mode === 'play') say(bora, '나무 → 돔의 맥 → 촉수로 빛이 이어졌어요! 빛이 두 갈래 항로를 읽어 냈어요.', () => openRoutes());
+      }, settings.reducedMotion ? 1500 : 4200);
+      return;
+    }
+    if (W.organFed && W.route && !W.chapterDone) return startVoyage();
+    if (W.organFed) return openRoutes();
+    toast.show(state.quests.q04 === 'available' ? '항해사 보라와 먼저 이야기해요.' : '항해 나무가 조용해요. 서로 다른 빛을 엮어 오면 대답할 거예요.');
+  }
+
+  function openRoutes() {
+    if (!state.world.organFed) return;
+    view.mode = 'panel-modal';
+    routes.show(state.world.route);
+    refresh();
+  }
+
   function requestDepart() {
     if (view.mode !== 'play') return;
     const check = canDepart(state);
-    if (!check.ok) {
-      toast.show(check.reason);
-      return;
-    }
+    if (!check.ok) return toast.show(check.reason);
+    startVoyage();
+  }
+
+  async function startVoyage() {
+    const check = canDepart(state);
+    if (!check.ok) return toast.show(check.reason);
+    if (!['play', 'dialogue'].includes(view.mode)) return;
+    const to = check.to;
+    const first = !state.voyage.visited[to] && isDestination(to) && !state.world.chapterDone;
     commitPosition();
-    closePanel();
+    closePanel(true);
     path = null;
     view.mode = 'voyage';
-    voyage.show(check.to === 'overlook' ? 'garden' : check.to);
     refresh();
+    // 1) 항해 나무로 빛이 들어가 도시 전체로 퍼진다(해파리 안에서 출발할 때)
+    if (!isDestination(state.scene) && props.flows.length && !settings.reducedMotion) {
+      props.flows.forEach((f) => f.start(2.6));
+      follow.pitch = Math.min(follow.maxPitch, 0.5);
+      await new Promise((r) => setTimeout(r, 2400));
+    }
+    // 2) 외부 연출: 수축하며 출발 → 별 흐름과 성운이 목적지 색으로 → 도착 준비
+    voyageSkipRequested = false;
+    const names = { solar: '태양 정원', ice: '얼음 성운', overlook: '항해 전망대' };
+    const lines = first
+      ? [
+          { at: 0, text: '해파리가 한 번 크게 숨을 쉬어요' },
+          { at: 2.5, text: '도시를 품은 해파리가 몸을 움츠리며 헤엄쳐 나가요' },
+          { at: 6, text: `별의 흐름이 ${names[to]}의 빛깔로 물들어요` },
+          { at: 10, text: `${names[to]}이 가까워져요` },
+        ]
+      : [{ at: 0, text: `해파리가 ${names[to]}(으)로 헤엄쳐 가요` }];
+    const minTime = settings.reducedMotion ? 1.6 : first ? 12 : 4;
+    voyageUi.show(to, lines, minTime, settings.reducedMotion);
     const started = performance.now();
-    voyagePromise = (async () => {
-      const r = reduce(state, { type: 'depart' });
-      if (r.error) return;
-      state = r.state;
-      save();
-      handleEvents(r.events);
-      // 연출 최소 시간
-      const wait = (reducedMotion ? 1600 : 3800) - (performance.now() - started);
-      if (wait > 0) await new Promise((res) => setTimeout(res, wait));
-    })();
-    voyagePromise.then(finishVoyage);
-  }
-
-  async function finishVoyage() {
-    if (view.mode !== 'voyage') return;
-    voyage.hide();
-    await voyagePromise;
-    if (view.mode !== 'voyage' && view.mode !== 'play') return;
-    view.mode = 'loading';
-    await enterScene({ label: `${SCENE_INFO[state.scene].name}에 내리는 중…` });
-    const arrivedText = {
-      ice: '얼음 성운에 도착했어요. 리본이 기다리고 있어요.',
-      solar: '태양 정원에 도착했어요. 따뜻한 빛의 재료를 찾아볼까요?',
-      twilight: '황혼 합류지에 도착했어요. 따뜻함과 차가움이 만나는 곳이에요.',
-      overlook: '해파리의 항해 전망대로 돌아왔어요.',
-    };
-    toast.show(arrivedText[state.scene] ?? '도착했어요.', 4500);
-  }
-
-  function openFinale() {
-    if (view.mode !== 'play') return;
-    view.mode = 'finale';
-    dispatch({ type: 'seeFinale' });
-    finale.show();
-    refresh();
-  }
-
-  // ------------------------------------------------------------------ 결정의 노래
-
-  function startListening() {
-    const st = state.quests.song;
-    if (st !== 'active') {
-      toast.show(st === 'available' || st === 'locked' ? '리본의 부탁을 먼저 들어 보세요.' : '이미 노래를 따라 했어요.');
+    // 지역 이동 직전 저장: 새로고침하면 목적지 선착장에서 안전하게 시작
+    if (!dispatch({ type: 'depart' })) {
+      voyageUi.hide();
+      view.mode = 'play';
+      refresh();
       return;
     }
+    if (to !== 'overlook') dispatchTutorial('voyage');
+    let ready = false;
+    let failed = null;
+    buildScene(state.scene)
+      .then(() => (ready = true))
+      .catch((e) => (failed = e));
+    while (!(ready && ((performance.now() - started) / 1000 >= minTime || voyageSkipRequested))) {
+      if (failed) break;
+      voyageUi.setWaiting(voyageSkipRequested || (performance.now() - started) / 1000 >= minTime);
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    if (failed) {
+      voyageUi.hide();
+      fader.show(`도착 장면을 불러오지 못했어요. 새로고침하면 선착장에서 다시 시작해요. (${failed.message})`);
+      return;
+    }
+    voyageUi.hide();
+    // 3) 선착장: 꽃잎 발판 위, 플레이어 뒤쪽 시점으로 조작 복귀
+    if (!actors.player) buildPlayer();
+    world.dynamic.add(actors.player.object);
+    const pose = arrivalPose(state.arrival ?? SCENE_INFO[state.scene].start);
+    actors.player.position.copy(pose.pos);
+    actors.player.groundY = pose.pos.y;
+    actors.player.setYaw(pose.yaw, true);
+    follow.snap(actors.player.position, pose.yaw + Math.PI);
+    renderer.compile(scene3, camera);
+    view.mode = 'play';
+    view.arrivedAt = performance.now();
+    commitPosition();
+    refresh();
+    const companion = actors.npcs.find((n) => n.id === 'ribbonIce' || n.id === 'salguSolar');
+    const complete = () => {
+      if (isDestination(state.scene)) {
+        dispatch({ type: 'arrivalControl' });
+        const d = spots.find((s) => s.kind === 'discovery' && !s.disabled);
+        if (d) setTimeout(() => wisp.fly(actors.player.position, d.pos), 900);
+      }
+    };
+    if (isDestination(state.scene) && companion && !state.world.arrived) {
+      setTimeout(() => {
+        companion.char.greet();
+        say(companion, '움직인다…! 우리가 만든 빛을 따라가고 있어. 봐, 여기까지 왔어!', complete);
+      }, 500);
+    } else {
+      complete();
+      toast.show(isDestination(state.scene) ? `${SCENE_INFO[state.scene].name}에 내렸어요.` : '해파리의 항해 전망대로 돌아왔어요.', 3500);
+    }
+  }
+
+  // ------------------------------------------------------------------ 문·승강대
+  async function passDoor(ex) {
+    if (view.mode !== 'play') return;
+    const link = LINKS[`${state.scene}:${ex.at}`];
+    if (!link) return toast.show('이쪽으로는 아직 갈 수 없어요.');
+    view.mode = 'transit';
+    path = null;
+    closePanel(true);
+    commitPosition();
+    refresh();
+    // 캐릭터가 문을 2~3걸음 통과하고, 꽃잎 막이 화면을 가리는 순간 전환
+    const door = props.doors.find((d) => d.ex.at === ex.at);
+    const target = door ? door.pos.clone() : actors.player.position.clone();
+    const start = actors.player.position.clone();
+    const dir = target.clone().sub(start).setY(0);
+    const through = target.clone().addScaledVector(dir.lengthSq() > 0.01 ? dir.normalize() : V3(0, 0, -1), 1.2);
+    actors.player.faceTowards(through.x, through.z);
+    const dur = settings.reducedMotion ? 0.3 : 0.9;
+    const t0 = performance.now();
+    await new Promise((resolve) => {
+      cinematic = {
+        update() {
+          const k = Math.min(1, (performance.now() - t0) / 1000 / dur);
+          actors.player.position.lerpVectors(start, through, k);
+          actors.player.update(0.016, 2.6, time);
+          if (k >= 1) this.finish();
+        },
+        finish() {
+          cinematic = null;
+          resolve();
+        },
+        skip() {
+          this.finish();
+        },
+      };
+    });
+    if (!dispatch({ type: 'travel', via: ex.at })) {
+      view.mode = 'play';
+      refresh();
+      return;
+    }
+    await enterScene({ label: `${SCENE_INFO[state.scene].name}(으)로` });
+  }
+
+  async function rideLift(ex) {
+    if (view.mode !== 'play') return;
+    const lift = props.lifts.get(ex.at);
+    view.mode = 'transit';
+    path = null;
+    closePanel(true);
+    commitPosition();
+    refresh();
+    if (lift && !settings.reducedMotion) {
+      const top = lift.object.position.clone().add(V3(0, 0.3, 0));
+      actors.player.position.copy(top);
+      actors.player.groundY = top.y;
+      toast.show('꽃잎 승강대가 촉수에 들려 올라가요.', 3000);
+      let t = 0;
+      await new Promise((resolve) => {
+        cinematic = {
+          update(dt) {
+            t += dt;
+            lift.ride = Math.min(3.2, t * 1.1);
+            lift.update(dt, time);
+            actors.player.position.y = lift.object.position.y + 0.3;
+            follow.target.copy(actors.player.position);
+            if (t > 3.2) this.finish();
+          },
+          finish() {
+            cinematic = null;
+            resolve();
+          },
+          skip() {
+            this.finish();
+          },
+        };
+      });
+    }
+    if (!dispatch({ type: 'travel', via: ex.at })) {
+      view.mode = 'play';
+      refresh();
+      return;
+    }
+    await enterScene({ label: `${SCENE_INFO[state.scene].name}에 닿는 중…` });
+  }
+
+  // ------------------------------------------------------------------ 도입 연출
+  async function playOpening() {
+    view.mode = 'loading';
+    refresh();
+    fader.show('멈춘 해파리를 바라보는 중…');
+    const openScene = 'walkway';
+    try {
+      await buildScene(openScene, (p) => fader.progress(p));
+    } catch {
+      dispatch({ type: 'seeOpening' });
+      return enterScene();
+    }
+    view.mode = 'cinematic';
+    refresh();
+    fader.hide();
+    const gate = props.gate;
+    // 첫 등불 → 접힌 다리 → 꺼져 가는 산책로 등불을 차례로 비춘다
+    const p0 = gate ? gate.pointAt(0) : V3();
+    const a = p0.clone().add(V3(-7, 3.2, 10));
+    const b = p0.clone().add(V3(-3.5, 2.2, 5.5));
+    const look = gate ? gate.pointAt(0.12).add(V3(0, 0.8, 0)) : V3();
+    const lines = ['빛들의 박자가 어긋나면서 해파리의 항해가 멈췄어요.', '산책로의 등불은 꺼지고, 촉수 다리는 접혀 이웃들이 만나지 못해요.', `작은 빛 ${state.profile.name}이(가) 제작실에서 깨어나요.`];
+    const dur = settings.reducedMotion ? 4 : 9;
+    let t = 0;
+    let shown = -1;
+    await new Promise((resolve) => {
+      cinematic = {
+        update(dt) {
+          t += dt;
+          const k = Math.min(1, t / dur);
+          const e = k * k * (3 - 2 * k);
+          camera.position.lerpVectors(a, b, settings.reducedMotion ? 0.5 : e);
+          camera.lookAt(look);
+          const idx = Math.min(lines.length - 1, Math.floor(k * lines.length));
+          if (idx !== shown) {
+            shown = idx;
+            banner.show('첫 번째 숨결', lines[idx], '', dur * 1000);
+          }
+          // 등불이 하나씩 꺼져 간다
+          [...props.lanterns.values()].forEach((l, i) => {
+            l.state = k < 0.2 + i * 0.12 ? 'on' : 'off';
+          });
+          if (k >= 1) this.finish();
+        },
+        finish() {
+          cinematic = null;
+          resolve();
+        },
+        skip() {
+          this.finish();
+        },
+      };
+      toast.show('Esc 또는 클릭으로 건너뛸 수 있어요.', 3000);
+    });
+    dispatch({ type: 'seeOpening' });
+    await enterScene({ label: '빛 제작실에서 깨어나는 중…' });
+    // 창밖을 향해 한 번 시점을 돌려 목표 방향을 보여 준다
+    const lookAt = SCENE_INFO.workshop.lookAt;
+    if (lookAt && !settings.reducedMotion) {
+      setTimeout(() => {
+        follow.autoYaw = Math.atan2(actors.player.position.x - lookAt[0], actors.player.position.z - lookAt[2]);
+      }, 1200);
+    }
+  }
+
+  // ------------------------------------------------------------------ 결정의 노래(선택형)
+  function startListening() {
+    const st = state.quests.song;
+    if (st !== 'active') return toast.show(st === 'available' || st === 'locked' ? '리본의 부탁을 먼저 들어 보세요.' : '이미 노래를 따라 했어요.');
     unlockAudio();
     view.puzzle = listen(view.puzzle);
     const token = ++playToken;
     const seq = view.puzzle.sequence;
-    const gap = reducedMotion ? 950 : 820;
-    seq.forEach((id, i) => {
-      setTimeout(() => {
-        if (token === playToken) flashCrystal(id);
-      }, 650 + i * gap);
-    });
+    const gap = settings.reducedMotion ? 950 : 820;
+    seq.forEach((id, i) => setTimeout(() => token === playToken && flashCrystal(id), 650 + i * gap));
     setTimeout(() => {
       if (token !== playToken) return;
       view.puzzle = finishListening(view.puzzle);
@@ -749,14 +1710,12 @@ async function boot() {
     }, 650 + seq.length * gap + 200);
     refresh();
   }
-
   function flashCrystal(id) {
     props.crystals[id]?.flash();
     chime(SCENE_INFO.ice.puzzle.tones[id]);
     setTimeout(updatePanels, 30);
     setTimeout(updatePanels, 700);
   }
-
   function puzzlePress(id) {
     if (view.puzzle.status !== 'input' || state.scene !== 'ice') return;
     unlockAudio();
@@ -771,22 +1730,32 @@ async function boot() {
         updatePanels();
       }, 1100);
       dispatch({ type: 'puzzleResult', success: false });
-      puzzlePanel.el.querySelector('.btn-primary')?.focus({ preventScroll: true });
     } else if (view.puzzle.status === 'success') {
       props.crystals.forEach((c, i) => setTimeout(() => flashCrystal(c.index), 250 + i * 180));
-      props.crystals.forEach((c) => sparkles.burst(c.object.position.clone().add(new THREE.Vector3(0, 1.4, 0)), 12, reducedMotion));
       dispatch({ type: 'puzzleResult', success: true });
-    } else {
+    } else refresh();
+  }
+
+  function closePanel(silent = false) {
+    if (view.panel?.kind === 'puzzle' && view.puzzle.status === 'listening') {
+      playToken += 1;
+      view.puzzle = { ...view.puzzle, status: 'idle' };
+    }
+    if (view.panel?.kind === 'tune') {
+      view.tuning = null;
+    }
+    view.panel = null;
+    if (!silent) {
+      syncProps();
       refresh();
     }
   }
 
   // ------------------------------------------------------------------ 이동
-
   function commitPosition() {
-    if (!actors.player || world.id !== state.scene) return;
+    if (!actors.player || world.id !== state.scene || !state.profile.created || !['play', 'transit', 'voyage', 'loading'].includes(view.mode)) return;
     const p = actors.player.position;
-    const r = reduce(state, { type: 'setPosition', scene: state.scene, x: p.x, y: p.y, z: p.z, yaw: actors.player.yaw });
+    const r = reduce(state, { type: 'setPosition', scene: state.scene, x: p.x, y: actors.player.groundY ?? p.y, z: p.z, yaw: actors.player.yaw });
     if (!r.error) {
       state = r.state;
       save();
@@ -799,13 +1768,12 @@ async function boot() {
     const from = { x: player.position.x, y: player.groundY ?? player.position.y, z: player.position.z };
     let route = findPath(world.grid, from, point, 400000);
     if (!route) {
-      // 칸 경계에 서 있어 시작 칸을 못 찾는 경우: 가장 가까운 보행 칸에서 다시
       const near = nearestWalkable(world.grid, from.x, from.z, from.y, 4);
       if (near) route = findPath(world.grid, near, point, 400000);
       if (route) route.unshift(near);
     }
     if (!route) return false;
-    path = route.slice(1).map((p) => new THREE.Vector3(p.x, p.y, p.z));
+    path = route.slice(1).map((p) => V3(p.x, p.y, p.z));
     pathDone = then;
     if (!path.length) {
       path = null;
@@ -818,18 +1786,21 @@ async function boot() {
   scene3.add(moveMarker.mesh);
   let moveMarkerLife = 0;
 
-  function updatePlayerIdle(dt) {
-    actors.player.update(dt, 0, time);
-  }
-
   function updatePlayer(dt) {
     const player = actors.player;
     const grid = world.grid;
     let speed = 0;
-    const dir = new THREE.Vector3();
+    const dir = V3();
+    // 제작·조율 중에는 이동 입력을 막아 오조작을 막는다(Esc로 닫기)
+    const lockedPanel = view.panel?.kind === 'craft' || view.panel?.kind === 'tune';
+    if (lockedPanel) {
+      path = null;
+      player.update(dt, 0, time);
+      return;
+    }
     if (keys.size) {
-      const f = follow.forward(new THREE.Vector3());
-      const r = new THREE.Vector3(-f.z, 0, f.x);
+      const f = follow.forward(V3());
+      const r = V3(-f.z, 0, f.x);
       if (keys.has('f')) dir.add(f);
       if (keys.has('b')) dir.sub(f);
       if (keys.has('r')) dir.add(r);
@@ -839,11 +1810,10 @@ async function boot() {
       const next = path[0];
       dir.set(next.x - player.position.x, 0, next.z - player.position.z);
       const dist = dir.length();
-      // 진척 감시: 경유점마다 걸어갈 시간 예산을 두고, 칸 경계에 걸려 맴돌면 붙이거나 다시 찾는다
       if (player.wp !== next) {
         player.wp = next;
         player.wpT = 0;
-        player.wpBudget = dist / WALK_SPEED * 1.6 + 0.6;
+        player.wpBudget = (dist / WALK_SPEED) * 1.6 + 0.6;
       }
       player.wpT += dt;
       if (player.wpT > player.wpBudget) {
@@ -856,7 +1826,8 @@ async function boot() {
           const cb = pathDone;
           path = null;
           walkTo(goal, cb);
-          return updatePlayerIdle(dt);
+          player.update(dt, 0, time);
+          return;
         }
       }
       if (dist < 0.3) {
@@ -877,7 +1848,6 @@ async function boot() {
       if (path && !keys.size) step = Math.min(step, Math.hypot(path[0].x - player.position.x, path[0].z - player.position.z));
       const before = player.position.clone();
       if (grid && path && !keys.size) {
-        // 경로 이동: A*가 이미 확인한 경유점 사이를 그대로 따라간다(칸 반올림 차이로 턱에 걸리지 않게)
         const prevY = player.groundY ?? before.y;
         player.position.x += dir.x * step;
         player.position.z += dir.z * step;
@@ -885,8 +1855,6 @@ async function boot() {
         player.groundY = g ?? prevY + (path[0].y - prevY) * Math.min(1, step / Math.max(0.01, Math.hypot(path[0].x - before.x, path[0].z - before.z)));
         player.position.y += (player.groundY - player.position.y) * Math.min(1, dt * 18);
       } else if (grid) {
-        // 이동 판정은 격자 칸 높이(groundY)로, 화면 높이는 부드럽게 따라가게 분리한다
-        // (보간된 높이로 판정하면 비탈을 내려갈 때 턱으로 오인해 멈춘다)
         const gy0 = player.groundY ?? before.y;
         const res = stepMove(grid, { x: before.x, y: gy0, z: before.z }, dir.x * step, dir.z * step);
         player.position.x = res.x;
@@ -894,26 +1862,89 @@ async function boot() {
         player.groundY = res.y;
         const gy = smoothGround(grid, res.x, res.z, res.y) ?? res.y;
         player.position.y += (gy - player.position.y) * Math.min(1, dt * 18);
-      } else {
-        player.position.addScaledVector(dir, step);
-      }
+      } else player.position.addScaledVector(dir, step);
       const moved = Math.hypot(player.position.x - before.x, player.position.z - before.z);
       speed = moved / Math.max(dt, 1e-4);
+      movedDistance += moved;
+      if (movedDistance > 2) dispatchTutorial('move');
       if (moved > 1e-3) player.setYaw(Math.atan2(dir.x, dir.z));
     }
     player.update(dt, speed, time);
     const walking = speed > 0.2;
     if (wasWalking && !walking) commitPosition();
     wasWalking = walking;
+
+    // 자주 오간 문은 문턱을 걸어서 통과(도착 직후·키 입력 없이 다가간 경우는 제외)
+    if (walking && performance.now() - view.arrivedAt > 1800) {
+      for (const { ex, pos, door, walkThrough } of props.doors) {
+        if (door.locked || !walkThrough) continue;
+        const target = LINKS[`${state.scene}:${ex.at}`]?.[0];
+        if (!target || !state.positions[target]) continue;
+        const d = Math.hypot(player.position.x - pos.x, player.position.z - pos.z);
+        const toward = dir.x * (pos.x - player.position.x) + dir.z * (pos.z - player.position.z) > 0;
+        if (d < 0.9 && toward) {
+          passDoor(ex);
+          break;
+        }
+      }
+    }
+  }
+
+  function updateNpcs(dt) {
+    for (const n of actors.npcs) {
+      let speed = 0;
+      if (n.walk?.pts.length) {
+        const next = n.walk.pts[0];
+        const d = V3(next.x - n.char.position.x, 0, next.z - n.char.position.z);
+        if (d.length() < 0.25) n.walk.pts.shift();
+        else {
+          d.normalize();
+          const step = Math.min(2.4 * dt, d.length() || 1);
+          n.char.position.addScaledVector(d, 2.4 * dt > 0 ? step : 0);
+          const g = world.grid ? groundAt(world.grid, n.char.position.x, n.char.position.z, n.char.position.y, 0.6) : null;
+          if (g !== null) n.char.position.y += (g - n.char.position.y) * Math.min(1, dt * 12);
+          n.char.setYaw(Math.atan2(d.x, d.z));
+          speed = 2.4;
+        }
+        if (!n.walk.pts.length) {
+          const done = n.walk.done;
+          n.walk = null;
+          done?.();
+        }
+      } else if (view.companion === n.id && actors.player) {
+        const p = actors.player.position;
+        const d = V3(p.x - n.char.position.x, 0, p.z - n.char.position.z);
+        const dist = d.length();
+        if (dist > 2.2 && world.grid) {
+          d.normalize();
+          const res = stepMove(world.grid, { x: n.char.position.x, y: n.char.position.y, z: n.char.position.z }, d.x * Math.min(dist - 2, 3.2 * dt), d.z * Math.min(dist - 2, 3.2 * dt));
+          n.char.position.set(res.x, n.char.position.y + (res.y - n.char.position.y) * Math.min(1, dt * 12), res.z);
+          if (!res.moved && dist > 8) {
+            const w = nearestWalkable(world.grid, p.x - d.x * 1.5, p.z - d.z * 1.5, p.y, 8);
+            if (w) n.char.position.set(w.x, w.y, w.z);
+          }
+          n.char.setYaw(Math.atan2(d.x, d.z));
+          speed = 3;
+        } else n.char.faceTowards(p.x, p.z);
+      } else if (actors.player) {
+        const d = n.char.position.distanceTo(actors.player.position);
+        if (d < 5) n.char.faceTowards(actors.player.position.x, actors.player.position.z);
+        else n.char.setYaw(n.homeYaw);
+      }
+      n.char.update(dt, speed, time);
+      if (n.resting) n.char.model.position.y = Math.sin(time * 0.9) * 0.02 - 0.03;
+      n.char.object.visible = camera.position.distanceTo(n.char.position) > 1.0 + n.char.height * 0.4 || camera.position.y > n.char.position.y + n.char.height + 0.3;
+      n.mark.position.y = n.char.height + 0.45 + Math.sin(time * 2.5) * 0.06;
+    }
   }
 
   // ------------------------------------------------------------------ 입력
-
   const raycaster = new THREE.Raycaster();
   const pointer = { down: false, x: 0, y: 0, dragged: false, id: null, button: 0 };
   canvas.addEventListener('pointerdown', (e) => {
-    if (view.mode !== 'play' && view.mode !== 'modal') return;
     unlockAudio();
+    if (view.mode === 'cinematic' && cinematic?.skip && !props.gate?.progress) return;
+    if (view.mode !== 'play') return;
     Object.assign(pointer, { down: true, x: e.clientX, y: e.clientY, dragged: false, id: e.pointerId, button: e.button });
     canvas.setPointerCapture(e.pointerId);
   });
@@ -924,6 +1955,7 @@ async function boot() {
     if (!pointer.dragged && Math.hypot(dx, dy) > 6) pointer.dragged = true;
     if (pointer.dragged) {
       follow.rotate(dx * 0.0065, dy * 0.0045);
+      markLook(dx * 0.0065);
       pointer.x = e.clientX;
       pointer.y = e.clientY;
       canvas.classList.add('is-dragging');
@@ -936,10 +1968,15 @@ async function boot() {
     if (!pointer.dragged && pointer.button === 0 && view.mode === 'play') handleClick(e.clientX, e.clientY);
   };
   canvas.addEventListener('pointerup', endPointer);
-  canvas.addEventListener('pointercancel', (e) => {
+  canvas.addEventListener('pointercancel', () => {
     pointer.down = false;
     canvas.classList.remove('is-dragging');
-    void e;
+  });
+  canvas.addEventListener('click', () => {
+    if (view.mode === 'cinematic' && cinematic && !world.root?.userData?.noSkip) {
+      // 도입 연출만 클릭으로 건너뛴다
+      if (!state.world.openingSeen) cinematic.skip();
+    }
   });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener(
@@ -955,7 +1992,6 @@ async function boot() {
     const ndc = new THREE.Vector2((cx / window.innerWidth) * 2 - 1, -(cy / window.innerHeight) * 2 + 1);
     raycaster.setFromCamera(ndc, camera);
     raycaster.far = 80;
-    // 주민·결정
     const hit = raycaster.intersectObjects(clickables, false)[0];
     if (hit) {
       const crystal = hit.object.userData.crystal;
@@ -967,15 +2003,11 @@ async function boot() {
         }
         return;
       }
-      const charId = hit.object.userData.character;
-      const sp = spots.find((s) => s.kind === 'npc' && s.npc.char.model === findCharRoot(hit.object));
-      if (sp) {
-        approach(sp);
-        return;
-      }
-      void charId;
+      let root = hit.object;
+      while (root && !root.name?.startsWith('char:')) root = root.parent;
+      const sp = spots.find((s) => s.kind === 'npc' && s.npc.char.object === root);
+      if (sp) return approach(sp);
     }
-    // 설치 지점·출구·발견물·작업대: 화면에서 가까운 표시를 누르면 걸어가서 상호작용
     const stageP = clientToStage(cx, cy);
     let bestSpot = null;
     let bestD = 60;
@@ -989,49 +2021,47 @@ async function boot() {
         bestSpot = s;
       }
     }
-    if (bestSpot) {
-      approach(bestSpot);
-      return;
-    }
-    if (!world.grid) return;
+    if (bestSpot) return approach(bestSpot);
+    if (!world.grid || view.panel?.kind === 'craft' || view.panel?.kind === 'tune') return;
     const g = pickGround(world.grid, raycaster.ray.origin, raycaster.ray.direction, 90);
-    if (g && walkTo(new THREE.Vector3(g.x, g.y, g.z))) {
+    if (g && walkTo(V3(g.x, g.y, g.z))) {
       moveMarker.mesh.position.set(g.x, g.y + 0.05, g.z);
       moveMarkerLife = 1;
-    } else {
-      toast.show('그곳으로는 걸어갈 수 없어요.', 1600);
-    }
-  }
-
-  function findCharRoot(o) {
-    let cur = o;
-    while (cur && !(cur.parent && cur.parent.name?.startsWith('char:'))) cur = cur.parent;
-    return cur;
+    } else toast.show('그곳으로는 걸어갈 수 없어요.', 1600);
   }
 
   function approach(spot) {
     const p = actors.player.position;
-    if (Math.hypot(spot.pos.x - p.x, spot.pos.z - p.z) < spot.radius * 0.8) {
-      interactWith(spot);
-      return;
-    }
-    // 대상 앞(플레이어 쪽) 걸을 수 있는 칸
-    const dir = new THREE.Vector3(p.x - spot.pos.x, 0, p.z - spot.pos.z).normalize();
-    const goal = snapToGrid(spot.pos.clone().addScaledVector(dir, Math.min(1.4, spot.radius * 0.6)));
+    const sp = spot.live ? spot.live() : spot.pos;
+    if (Math.hypot(sp.x - p.x, sp.z - p.z) < spot.radius * 0.8) return interactWith(spot);
+    const dir = V3(p.x - sp.x, 0, p.z - sp.z).normalize();
+    const goal = snapToGrid(sp.clone().addScaledVector(dir, Math.min(1.4, spot.radius * 0.6)));
     if (walkTo(goal, () => interactWith(spot))) return;
-    if (walkTo(snapToGrid(spot.pos), () => interactWith(spot))) return;
+    if (walkTo(snapToGrid(sp), () => interactWith(spot))) return;
     toast.show(`${spot.name}까지 가는 길을 찾지 못했어요.`, 2000);
   }
 
   window.addEventListener('keydown', (e) => {
+    if (view.mode === 'cinematic' && e.code === 'Escape' && cinematic && !state.world.openingSeen) {
+      cinematic.skip();
+      return;
+    }
     if (view.mode !== 'play') return;
-    if (e.code === 'Escape' && view.panel) {
-      closePanel();
+    if (e.code === 'Escape') {
+      if (view.panel) {
+        if (view.panel.kind === 'tune') actions.tuneCancel();
+        else closePanel();
+      } else actions.openSettings();
       return;
     }
     const tag = e.target?.tagName;
     if (tag === 'INPUT') return;
     if (e.target?.getAttribute?.('role') === 'radio' && e.code.startsWith('Arrow')) return;
+    if ((e.code === 'KeyE' || e.code === 'Space') && view.panel?.kind === 'tune' && !e.repeat) {
+      e.preventDefault();
+      actions.tunePress();
+      return;
+    }
     const dir = KEYMAP[e.code];
     if (dir) {
       e.preventDefault();
@@ -1044,7 +2074,6 @@ async function boot() {
       actions.interact();
     } else if (e.code === 'KeyQ' && !e.repeat) actions.rotateCamera(-1);
     else if (e.code === 'KeyR' && !e.repeat) actions.rotateCamera(1);
-    else if (e.code === 'Escape' && view.panel) closePanel();
   });
   window.addEventListener('keyup', (e) => {
     const dir = KEYMAP[e.code];
@@ -1056,7 +2085,6 @@ async function boot() {
     run = false;
   });
 
-  // ------------------------------------------------------------------ 디버그
   function drawDebugGrid() {
     const g = world.grid;
     const pts = [];
@@ -1071,12 +2099,6 @@ async function boot() {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
     world.dynamic.add(new THREE.Points(geo, new THREE.PointsMaterial({ color: '#ff5a8a', size: 0.08, toneMapped: false })));
-    for (const [name, v] of Object.entries(world.nav)) {
-      const s = new THREE.Mesh(new THREE.SphereGeometry(0.15), new THREE.MeshBasicMaterial({ color: '#00ffcc' }));
-      s.position.copy(v.p);
-      s.name = name;
-      world.dynamic.add(s);
-    }
   }
 
   // ------------------------------------------------------------------ 루프
@@ -1087,33 +2109,38 @@ async function boot() {
   function frame() {
     const dt = Math.min(0.05, clock.getDelta());
     time += dt;
-    if (world.root && actors.player) {
-      if (view.mode === 'play') updatePlayer(dt);
-      else actors.player.update(dt, 0, time);
-
-      // 주민: 가까우면 플레이어를 바라본다
-      for (const n of actors.npcs) {
-        const d = n.char.position.distanceTo(actors.player.position);
-        if (d < 5) n.char.faceTowards(actors.player.position.x, actors.player.position.z);
-        else n.char.setYaw(n.homeYaw);
-        // 카메라가 주민 몸 속으로 들어가면 잠시 숨긴다
-        n.char.object.visible = camera.position.distanceTo(n.char.position) > 1.0 + n.char.height * 0.4 || camera.position.y > n.char.position.y + n.char.height + 0.3;
-        n.char.update(dt, 0, time);
-        n.mark.position.y = n.char.height + 0.45 + Math.sin(time * 2.5) * 0.06;
+    if (world.root) {
+      if (cinematic) cinematic.update(dt);
+      if (actors.player && actors.player.object.parent) {
+        if (view.mode === 'play') updatePlayer(dt);
+        else if (view.mode !== 'transit') actors.player.update(dt, 0, time);
       }
-      follow.target.copy(actors.player.position);
-      follow.update(dt);
-      world.update(dt, { camera: camera.position, target: actors.player.position });
+      updateNpcs(dt);
+      const focus = actors.player?.object.parent ? actors.player.position : camera.position;
+      if (view.mode !== 'cinematic' || actors.player?.object.parent) {
+        if (actors.player?.object.parent && !(view.mode === 'cinematic' && !state.world.openingSeen)) {
+          follow.target.copy(actors.player.position);
+          follow.update(dt);
+        }
+      }
+      world.update(dt, { camera: camera.position, target: focus });
 
       for (const e of props.slots.values()) {
         e.ring.update(time);
         e.prop?.update(time);
+        e.lamp?.update(dt, time);
       }
+      const tuningLamp = view.tuning ? props.lanterns.get(SCENE_INFO.walkway.offbeat[view.tuning.index]) : null;
+      for (const [name, l] of props.lanterns) l.update(dt, time, l === tuningLamp ? glowAt(view.tuning, time) : null);
       props.preview?.update(time);
-      props.workbenchPreview?.update(time);
-      props.sleepers.forEach((p) => p.visible !== false && p.update(time));
+      props.benchPreview?.update(time);
       props.rings.forEach((r) => r.update(time));
-      props.beacons.forEach((b) => b.update(time, camera.position));
+      if (actors.player) for (const d of props.doors) d.door.update(dt, time, d.pos.distanceTo(actors.player.position), camera.position);
+      for (const lift of props.lifts.values()) if (!cinematic) lift.update(dt, time);
+      if (props.gate && !cinematic) props.gate.apply(time);
+      props.bud?.bud.update(dt, time);
+      props.glimmers.forEach((g) => g.g.update(time));
+      props.flows.forEach((f) => f.update(dt));
       props.crystals.forEach((c) => c.update(dt, time));
       for (const d of props.discoveries.values()) {
         d.spr.position.y = 0.7 + Math.sin(time * 2) * 0.12;
@@ -1124,21 +2151,40 @@ async function boot() {
       moveMarker.mesh.material.opacity = moveMarkerLife;
       moveMarker.mesh.visible = moveMarkerLife > 0;
       sparkles.update(dt);
+      wisp.update(dt, time);
 
-      if (view.mode === 'play') {
+      if (view.mode === 'play' && actors.player) {
         const t = nearestTarget();
         view.target = t;
-        const panelOnTarget = view.panel && t && ((view.panel.kind === 'slot' && t.kind === 'slot' && t.id === view.panel.id) || (view.panel.kind === 'craft' && t.kind === 'workbench') || (view.panel.kind === 'puzzle' && t.kind === 'puzzle'));
+        const panelOnTarget =
+          view.panel && t && ((view.panel.kind === 'slot' && t.kind === 'slot' && t.id === view.panel.id) || (view.panel.kind === 'craft' && t.kind === 'workbench') || (view.panel.kind === 'puzzle' && t.kind === 'puzzle') || (view.panel.kind === 'tune' && (t.kind === 'tune' || t.kind === 'slot')));
         prompt.update(panelOnTarget ? null : t);
         if (view.panel) {
-          const kind = { slot: 'slot', craft: 'workbench', puzzle: 'puzzle' }[view.panel.kind];
+          const kind = { slot: 'slot', craft: 'workbench', puzzle: 'puzzle', tune: 'tune' }[view.panel.kind];
           const anchor = spots.find((s) => s.kind === kind && (kind !== 'slot' || s.id === view.panel.id));
-          if (!anchor || anchor.pos.distanceTo(actors.player.position) > PANEL_CLOSE_RADIUS) closePanel();
+          if (!anchor || anchor.pos.distanceTo(actors.player.position) > PANEL_CLOSE_RADIUS + (kind === 'tune' ? 2 : 0)) {
+            if (view.panel.kind === 'tune') actions.tuneCancel();
+            else closePanel();
+          }
         }
-        if (view.panel?.kind === 'slot' || view.panel?.kind === 'craft') updatePanels();
+        if (view.panel) updatePanels();
+        hint.set(currentHint());
+        updateGuide();
+        // 오래 진행이 없으면 안내 빛
+        if (settings.hints && performance.now() - view.lastProgress > 22000 && performance.now() - view.wispAt > 14000) {
+          const target = hintTarget();
+          if (target) {
+            wisp.fly(actors.player.position, target.live ? target.live() : target.pos);
+            view.wispAt = performance.now();
+          }
+        }
       } else {
         prompt.update(null);
+        if (view.mode !== 'dialogue') hint.set(null);
+        hideGuide();
       }
+      objMarker.update(time, actors.player?.position, camera.position);
+      trail.update(time);
       bubble.follow();
       renderer.render(scene3, camera);
     }
@@ -1157,7 +2203,7 @@ async function boot() {
   try {
     setBoot(0.1);
     await Promise.all([loadCharacters(), preloadLightImages()]);
-    setBoot(0.5);
+    setBoot(0.6);
   } catch (err) {
     console.error(err);
     bootEl.querySelector('p').textContent = '에셋을 불러오지 못했어요. tools/export-all.mjs로 변환했는지 확인해 주세요.';
@@ -1165,23 +2211,24 @@ async function boot() {
   }
   bootEl.remove();
   requestAnimationFrame(frame);
-  try {
-    await enterScene({ label: `${SCENE_INFO[state.scene].name}을(를) 여는 중…` });
-  } catch (err) {
-    console.error(err);
-    fader.show(`장면을 불러오지 못했어요: ${err.message}`);
-    return;
+  refresh();
+
+  // 검수용: ?dev 는 기본 캐릭터를 만들고, ?scene=… 은 지정 장면을 바로 연다
+  if (params.has('dev') && !state.profile.created) {
+    dispatch({ type: 'setProfile', profile: {}, confirm: true });
+    dispatch({ type: 'seeOpening' });
   }
-  if (loaded.notice) toast.show(loaded.notice, 6000);
-  if (!state.flags.introSeen && !params.has('skipIntro')) {
-    view.mode = 'intro';
-    intro.show();
+  if (params.get('tm') === 'neutral') renderer.toneMapping = THREE.NeutralToneMapping;
+  if (params.get('scene') && SCENES.includes(params.get('scene')) && state.profile.created) {
+    state = { ...state, scene: params.get('scene'), arrival: null };
+    buildPlayer();
+    await enterScene();
+  } else {
+    view.mode = 'title';
+    title.show({ hasSave: loaded.hasSave, name: state.profile.name, legacy: loaded.legacy || LEGACY_KEYS.some((k) => storage?.getItem(k)) });
     refresh();
-  } else if (params.has('skipIntro') && !state.flags.introSeen) {
-    dispatch({ type: 'seeIntro' });
   }
 
-  // 콘솔 검수용
   window.lumina = {
     get state() {
       return state;
@@ -1191,35 +2238,27 @@ async function boot() {
     },
     perf,
     world,
-    get walking() {
-      return !!path;
-    },
-    get path() {
-      return path?.map((p) => p.toArray().map((n) => Math.round(n * 100) / 100)) ?? null;
-    },
     camera: follow,
+    settings,
     get player() {
       return actors.player;
     },
-    dispatch,
-    /** 지정 지점까지 실제 경로로 걷기(three 좌표) */
-    walkTo: (x, z, y = actors.player.position.y) => view.mode === 'play' && walkTo(new THREE.Vector3(x, y, z)),
-    /** 동선 표시 이름으로 걷기 */
-    walkToMarker(name) {
-      const p = markerGround(name);
-      return p ? walkTo(p) : false;
+    get walking() {
+      return !!path;
     },
-    spots: () => spots.map((s) => ({ kind: s.kind, id: s.id, name: s.name, pos: s.pos.toArray().map((n) => Math.round(n * 100) / 100) })),
-    /** 대상 앞까지 걸어가서 상호작용 */
+    get cinematic() {
+      return !!cinematic;
+    },
+    dispatch,
+    spots: () => spots.map((s) => ({ kind: s.kind, id: s.id, name: s.name, disabled: !!s.disabled, pos: (s.live ? s.live() : s.pos).toArray().map((n) => Math.round(n * 100) / 100) })),
+    npcs: () => actors.npcs.map((n) => ({ id: n.id, pos: n.char.position.toArray().map((v) => Math.round(v * 100) / 100) })),
     approach(kind, id) {
-      const s = spots.find((x) => x.kind === kind && (id === undefined || x.id === id));
+      const s = spots.find((x) => x.kind === kind && (id === undefined || x.id === id) && !x.disabled);
       if (s) approach(s);
       return !!s;
     },
-    async goto(sceneId) {
-      state = { ...state, scene: sceneId, arrival: null };
-      await enterScene();
-    },
+    skipCinematic: () => cinematic?.skip(),
+    hint: () => currentHint(),
     reset() {
       storage?.removeItem(SAVE_KEY);
       location.reload();

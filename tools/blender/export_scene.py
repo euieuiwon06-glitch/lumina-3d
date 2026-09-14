@@ -13,6 +13,7 @@ from mathutils.bvhtree import BVHTree
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import simplify_material  # noqa: E402
+import bake as baker  # noqa: E402
 
 argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
 SID, OUT = argv[0], argv[1]
@@ -132,13 +133,13 @@ def prepare_meshes(far):
 
 
 # ------------------------------------------------------------------ GLB
-def export_glb(objs):
+def export_glb(objs, baked=False):
     seen = set()
     for o in objs:
         for slot in o.material_slots:
             if slot.material and slot.material.name not in seen:
                 seen.add(slot.material.name)
-                simplify_material(slot.material)
+                (baker.baked_material if baked else simplify_material)(slot.material)
     bpy.ops.object.select_all(action='DESELECT')
     for o in objs:
         o.select_set(True)
@@ -361,7 +362,15 @@ with open(json_path, 'w', encoding='utf-8') as f:
 log('JSON', json_path)
 
 if '--no-glb' not in FLAGS:
-    export_glb(objs)
+    baked = '--bake' in FLAGS
+    if baked:
+        baker.bake_vertex_colors([o for o in objs if o.type in ('MESH', 'CURVE')], scene, log,
+                                 samples=int(os.environ.get('LUMINA_BAKE_SAMPLES', '128')))
+        # 정점 색 = 블렌더 뷰 변환을 거친 표시 색
+        meta['baked'] = dict(display=True, view=scene.view_settings.view_transform, look=scene.view_settings.look)
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(meta, f, ensure_ascii=False)
+    export_glb(objs, baked)
 
 if '--no-pano' not in FLAGS:
     start = nav_b.get('PLAYER_START') or next((v for k, v in nav_b.items() if k.startswith('ENTRY_')), (0, 0, 0))
