@@ -630,7 +630,7 @@ export class NavBeacon {
     this.rune.material.map.rotation = t * 0.06;
     this.rune.material.opacity = (0.5 + L * 0.5) * beat;
     let curtainFade = 1;
-    if (cameraPos) curtainFade = 0.35 + 0.65 * THREE.MathUtils.smoothstep(Math.hypot((cameraPos.x - this.curtain.position.x) / this.curtain.scale.x, (cameraPos.z - this.curtain.position.z) / this.curtain.scale.z), 1.05, 1.8);
+    if (cameraPos) curtainFade = 0.08 + 0.92 * THREE.MathUtils.smoothstep(Math.hypot((cameraPos.x - this.curtain.position.x) / this.curtain.scale.x, (cameraPos.z - this.curtain.position.z) / this.curtain.scale.z), 1.25, 2.4);
     this.curtain.material.opacity = (0.55 + L * 0.5) * (0.8 + Math.sin(t * 1.3) * 0.2) * curtainFade;
     for (const c of this.columns) {
       let fade = 1;
