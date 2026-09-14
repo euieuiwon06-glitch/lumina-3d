@@ -11,11 +11,12 @@ import { Character, loadCharacters } from './engine/character.js';
 import { CharacterPreview } from './engine/preview.js';
 import { GroundRing, LightProp, SongCrystal, Sparkles, glowTexture, preloadLightImages, starTexture } from './engine/props.js';
 import { clientToStage, mountStage, stage } from './engine/stage.js';
-import { BridgeGate, BudPod, Glimmer, GuideWisp, Lantern, LightFlow, LightGate, PetalLift, SlabBridge, SleepingBud } from './engine/story-props.js';
+import { BridgeGate, BudPod, Glimmer, GuideWisp, Lantern, LightFlow, LightGate, loadLiftTemplate, PetalLift, SlabBridge, SleepingBud } from './engine/story-props.js';
 import { ObjectiveMarker, PathTrail } from './engine/guide-fx.js';
 import { guideTarget } from './game/guide.js';
 import { airMove, cellCenter, findPath, floodReachable, groundAt, nearestReachable, nearestWalkable, pickGround, smoothGround, stepMove, supportAt } from './engine/walkgrid.js';
-import { World } from './engine/world.js';
+import { loadVoyageAssets, VoyageScene } from './engine/voyage.js';
+import { BASE, gltfLoader, World } from './engine/world.js';
 import { BASES, BODY_COLORS, CHEST_COLORS, DISCOVERIES, MATERIALS, UNLOCKS, byId, lightName } from './game/catalog.js';
 import { BRANCH_LINES, dialogueFor } from './game/dialogue.js';
 import { createPuzzle, finishListening, listen, press } from './game/puzzle.js';
@@ -442,6 +443,8 @@ async function boot() {
   let creatorDraft = { ...state.profile };
   let exchangeMode = 'trade';
   let voyageSkipRequested = false;
+  let voyage3d = null; // 우주 해파리 항해 장면(처음 항해 때 한 번 만든다)
+  let voyageLive = null;
 
   function save() {
     if (storage && !saveState(storage, state)) toast.show('이 브라우저에서는 진행을 저장할 수 없어요.');
@@ -512,10 +515,11 @@ async function boot() {
     for (const el of [hud.elements.left, hud.elements.right, hud.elements.palette, hud.elements.dockWrap, hud.elements.camRow, prompt.el, slotPanel.el, craftPanel.el, puzzlePanel.el, tuningPanel.el]) {
       el.inert = blocked;
     }
-    const inGame = !['title', 'creator', 'cinematic'].includes(view.mode) && !!world.root;
+    // 항해 중에도 HUD를 숨겨 3D 해파리 연출이 화면을 채운다
+    const inGame = !['title', 'creator', 'cinematic', 'voyage'].includes(view.mode) && !!world.root;
     for (const el of [hud.elements.left, hud.elements.right, hud.elements.palette, hud.elements.dockWrap, hud.elements.camRow]) el.classList.toggle('is-away', !inGame);
     // 연출 중에는 HUD만 숨기고 자막(배너)·알림은 보인다
-    uiRoot.hidden = !(inGame || view.mode === 'cinematic');
+    uiRoot.hidden = !(inGame || view.mode === 'cinematic' || view.mode === 'voyage');
     if (inGame) hud.update({ state, info, view });
     updatePanels();
     stageEl.dataset.scene = state.scene;
@@ -758,7 +762,7 @@ async function boot() {
       dyn.add(door.object);
       props.doors.push({ door, ex, pos, walkThrough: ex.kind === 'door' });
       if (ex.kind === 'lift') {
-        const lift = new PetalLift();
+        const lift = new PetalLift(await loadLiftTemplate(gltfLoader, `${BASE}props/petal_lift.glb`));
         lift.object.position.copy(pos);
         lift.baseY = pos.y;
         dyn.add(lift.object);
@@ -911,13 +915,18 @@ async function boot() {
     prompt.update(null);
     keys.clear();
     path = null;
-    if (actors.player) actors.player.air = null;
+    if (actors.player) {
+      actors.player.air = null;
+      actors.player.shadowLift = 0;
+    }
     refresh();
     const id = state.scene;
     const info = SCENE_INFO[id];
     fader.show(label ?? `${info.name}(으)로 가는 중…`);
     try {
       await buildScene(id, (p) => fader.progress(p));
+      // 항해 전망대·도착지에서는 다음 항해 연출 에셋을 미리 받아 둔다
+      if (id === 'overlook' || isDestination(id)) loadVoyageAssets().catch(() => {});
     } catch (err) {
       console.error(err);
       fader.show(`장면을 불러오지 못했어요. 새로고침하면 안전한 자리에서 다시 시작해요. (${err.message})`);
@@ -1529,12 +1538,23 @@ async function boot() {
           { at: 10, text: `${names[to]}이 가까워져요` },
         ]
       : [{ at: 0, text: `해파리가 ${names[to]}(으)로 헤엄쳐 가요` }];
-    const minTime = settings.reducedMotion ? 1.6 : first ? 12 : 4;
-    voyageUi.show(to, lines, minTime, settings.reducedMotion);
+    const minTime = settings.reducedMotion ? 1.6 : first ? 12 : 6;
+    // 블렌더 우주 해파리를 3D로 헤엄치게 한다(에셋이 늦으면 예전 그림 연출)
+    voyageLive = null;
+    if (!settings.reducedMotion) {
+      const assets = await Promise.race([loadVoyageAssets().catch(() => null), new Promise((r) => setTimeout(() => r(null), 4000))]);
+      if (assets) {
+        voyage3d ??= new VoyageScene(...assets);
+        voyage3d.start(minTime);
+        voyageLive = voyage3d;
+      }
+    }
+    voyageUi.show(to, lines, minTime, settings.reducedMotion, !!voyageLive);
     const started = performance.now();
     // 지역 이동 직전 저장: 새로고침하면 목적지 선착장에서 안전하게 시작
     if (!dispatch({ type: 'depart' })) {
       voyageUi.hide();
+      voyageLive = null;
       view.mode = 'play';
       refresh();
       return;
@@ -1552,10 +1572,12 @@ async function boot() {
     }
     if (failed) {
       voyageUi.hide();
+      voyageLive = null;
       fader.show(`도착 장면을 불러오지 못했어요. 새로고침하면 선착장에서 다시 시작해요. (${failed.message})`);
       return;
     }
     voyageUi.hide();
+    voyageLive = null;
     // 3) 선착장: 꽃잎 발판 위, 플레이어 뒤쪽 시점으로 조작 복귀
     if (!actors.player) buildPlayer();
     world.dynamic.add(actors.player.object);
@@ -1641,7 +1663,7 @@ async function boot() {
     commitPosition();
     refresh();
     if (lift && !settings.reducedMotion) {
-      const top = lift.object.position.clone().add(V3(0, 0.3, 0));
+      const top = lift.object.position.clone().add(V3(0, lift.top, 0));
       actors.player.position.copy(top);
       actors.player.groundY = top.y;
       toast.show('꽃잎 승강대가 촉수에 들려 올라가요.', 3000);
@@ -1652,7 +1674,7 @@ async function boot() {
             t += dt;
             lift.ride = Math.min(3.2, t * 1.1);
             lift.update(dt, time);
-            actors.player.position.y = lift.object.position.y + 0.3;
+            actors.player.position.y = lift.object.position.y + lift.top;
             follow.target.copy(actors.player.position);
             if (t > 3.2) this.finish();
           },
@@ -1859,9 +1881,12 @@ async function boot() {
     air.y += air.vy * dt;
     const support = grid ? supportAt(grid, player.position.x, player.position.z, air.y) : player.groundY;
     const floor = support ?? player.groundY ?? air.y;
+    // 발밑 바닥(낮은 턱 위로 넘어가면 그 높이)에 그림자를 둔다
+    player.shadowLift = Math.max(0, air.y - floor);
     if (air.vy < 0 && air.y <= floor) {
       player.position.y = floor;
       player.groundY = floor;
+      player.shadowLift = 0;
       player.air = null;
       player.setAir(0, true);
       commitPosition();
@@ -1882,6 +1907,7 @@ async function boot() {
       path = null;
       if (player.air) {
         player.air = null;
+        player.shadowLift = 0;
         player.position.y = player.groundY ?? player.position.y;
         player.setAir(0);
       }
@@ -2211,7 +2237,10 @@ async function boot() {
   function frame() {
     const dt = Math.min(0.05, clock.getDelta());
     time += dt;
-    if (world.root) {
+    if (voyageLive) {
+      voyageLive.update(dt, camera.aspect);
+      renderer.render(voyageLive.scene, voyageLive.camera);
+    } else if (world.root) {
       if (cinematic) cinematic.update(dt);
       if (actors.player && actors.player.object.parent) {
         if (view.mode === 'play') updatePlayer(dt);
@@ -2238,7 +2267,11 @@ async function boot() {
       props.benchPreview?.update(time);
       props.rings.forEach((r) => r.update(time));
       if (actors.player) for (const d of props.doors) d.door.update(dt, time, d.pos.distanceTo(actors.player.position), camera.position);
-      for (const lift of props.lifts.values()) if (!cinematic) lift.update(dt, time);
+      for (const lift of props.lifts.values()) {
+        if (cinematic) continue;
+        const d = actors.player ? Math.hypot(actors.player.position.x - lift.object.position.x, actors.player.position.z - lift.object.position.z) : 99;
+        lift.update(dt, time, d);
+      }
       if (props.gate && !cinematic) props.gate.apply(time);
       props.bud?.bud.update(dt, time);
       props.glimmers.forEach((g) => g.g.update(time));
@@ -2352,6 +2385,15 @@ async function boot() {
       return !!cinematic;
     },
     dispatch,
+    /** 검수용: 항해 3D 장면만 띄워 at초 시점부터 재생(null이면 끄기) */
+    async voyagePreview(at = 0, duration = 12) {
+      if (at === null) return (voyageLive = null);
+      voyage3d ??= new VoyageScene(...(await loadVoyageAssets()));
+      voyage3d.start(duration);
+      voyage3d.time = at;
+      voyageLive = voyage3d;
+      return true;
+    },
     spots: () => spots.map((s) => ({ kind: s.kind, id: s.id, name: s.name, disabled: !!s.disabled, pos: (s.live ? s.live() : s.pos).toArray().map((n) => Math.round(n * 100) / 100) })),
     npcs: () => actors.npcs.map((n) => ({ id: n.id, pos: n.char.position.toArray().map((v) => Math.round(v * 100) / 100) })),
     approach(kind, id) {

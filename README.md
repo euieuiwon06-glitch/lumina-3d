@@ -48,6 +48,7 @@ node tools/playtest.mjs [--w 1280 --h 720]   # dev 서버 실행 중, 첫 챕터
 node tools/export-all.mjs --bake                 # 8개 장면: 근경 GLB(굽기)·360° 파노라마·보행 격자 (RTX 4060 약 1시간)
 node tools/export-all.mjs walkway --bake --no-grid --no-pano   # 한 장면 굽기만 다시
 node tools/export-all.mjs --characters           # 캐릭터 6종
+blender -b ../../비주얼/Space_Jellyfish_Garden_360.blend --python tools/blender/export_voyage.py -- public/assets/voyage   # 항해 연출(우주 해파리)
 ```
 
 **재질·색 재현(굽기)**: 각 장면을 Cycles로 정점 색에 굽는다(조명·GI·발광·절차적 무늬 포함). 모서리가 긴 면은 잘게 나눠 빛 변화를 담고, 부드러운 면은 이웃 정점과 평균해 노이즈를 줄인다. 그다음 **블렌더 자체 색 관리(AgX Punchy·노출)를 16비트 PNG 저장/읽기로 적용**해 원본 렌더에서 보이던 색 그대로 저장한다. 웹에서는 조명·톤매핑 없이 그대로 그리고, 파노라마 하늘도 같은 룩으로 구워 서로 맞는다. 캐릭터만 실시간 조명을 쓴다.

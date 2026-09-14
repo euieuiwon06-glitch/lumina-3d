@@ -422,9 +422,11 @@ export function createVoyageCinematic(root, actions) {
       return !el.hidden;
     },
     /** lines: [{at: 초, text}] */
-    show(to, lines, duration, reduced) {
+    /** live: 3D 해파리 항해를 뒤에 그리는 중이면 배경 그림·별 줄기 없이 목적지 빛깔만 살짝 입힌다 */
+    show(to, lines, duration, reduced, live = false) {
       el.hidden = false;
       el.classList.toggle('is-reduced', !!reduced);
+      el.classList.toggle('is-live', !!live);
       release = trapFocus(el, null);
       skip.focus();
       const t0 = performance.now();
@@ -444,11 +446,18 @@ export function createVoyageCinematic(root, actions) {
         ctx.clearRect(0, 0, W, H);
         // 목적지 색으로 서서히 물드는 성운
         const grad = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.7);
-        grad.addColorStop(0, `rgba(${tint[0]},${tint[1]},${tint[2]},${0.05 + k * 0.35})`);
-        grad.addColorStop(1, 'rgba(40,36,110,0)');
+        if (live) {
+          // 끝무렵 목적지 빛으로 번지며 도착 장면으로 넘어간다
+          const end = Math.max(0, (k - 0.8) / 0.2);
+          grad.addColorStop(0, `rgba(${tint[0]},${tint[1]},${tint[2]},${k * 0.12 + end * 0.75})`);
+          grad.addColorStop(1, `rgba(${tint[0]},${tint[1]},${tint[2]},${end * 0.45})`);
+        } else {
+          grad.addColorStop(0, `rgba(${tint[0]},${tint[1]},${tint[2]},${0.05 + k * 0.35})`);
+          grad.addColorStop(1, 'rgba(40,36,110,0)');
+        }
         ctx.fillStyle = grad;
         ctx.fillRect(0, 0, W, H);
-        if (!reduced) {
+        if (!reduced && !live) {
           const speed = 0.2 + Math.min(1, t / 3) * 1.4;
           for (const s of stars) {
             s.z -= 0.004 * speed;

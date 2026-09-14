@@ -417,6 +417,13 @@
 .voy .voyage-img {
   animation-duration: 14s;
 }
+/* 3D 해파리 항해가 뒤에서 그려지는 동안 */
+.voy.is-live {
+  background: transparent;
+}
+.voy.is-live .voyage-img {
+  display: none;
+}
 .voy.is-reduced .voyage-img {
   animation: none;
 }

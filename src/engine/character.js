@@ -306,6 +306,11 @@ export class Character {
     for (const f of this.floaters) {
       f.o.position.y = f.rest.y + Math.sin(time * 2 + f.phase) * 0.04;
     }
-    this.shadow.scale.setScalar(1 - Math.abs(Math.sin(this.phase)) * 0.08 * w);
+    // 그림자는 바닥에 남는다: 뛰어오른 높이(lift)만큼 내려 두고, 높을수록 작고 옅게
+    const lift = Math.max(0, this.shadowLift ?? 0);
+    this.shadow.position.y = 0.02 - lift;
+    const far = Math.min(1, lift / 1.2);
+    this.shadow.scale.setScalar((1 - Math.abs(Math.sin(this.phase)) * 0.08 * w) * (1 - far * 0.35));
+    this.shadow.material.opacity = 1 - far * 0.45;
   }
 }

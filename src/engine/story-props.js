@@ -147,8 +147,78 @@ export class LightGate {
 }
 
 /** C. 꽃잎 승강대: 탑승 확정 뒤 꽃잎이 난간처럼 접히고 떠오른다 */
+/** 블렌더 꽃잎 승강대(props/petal_lift.glb) 틀. 구운 정점 색은 조명 없이 그대로, 발광 선은 발광색으로 */
+let liftTemplate = null;
+export function loadLiftTemplate(loader, url) {
+  liftTemplate ??= loader
+    .loadAsync(url)
+    .then((gltf) => {
+      gltf.scene.traverse((o) => {
+        if (!o.isMesh) return;
+        const m = o.material;
+        const glow = { M_QuestVeinMint: '#C4F7E4', M_QuestGlowPeach: '#FFE2C4' }[m.name];
+        o.material = glow
+          ? Object.assign(new THREE.MeshBasicMaterial({ color: glow, toneMapped: false }), { name: m.name })
+          : Object.assign(new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false, side: THREE.DoubleSide }), { name: m.name });
+        if (glow) o.material.userData.glow = new THREE.Color(glow);
+        m.dispose();
+      });
+      return gltf.scene;
+    })
+    .catch((e) => {
+      console.warn('[LUMINA] 꽃잎 승강대 모델 없음, 간이 모양 사용', e);
+      return null;
+    });
+  return liftTemplate;
+}
+
+/**
+ * C. 꽃잎 승강대(블렌더 모델): 꽃받침 발판 둘레의 꽃잎 여섯 장이 평소엔 벌어져 있고,
+ * 가까이 오면 더 활짝 열려 맞이하고, 탑승하면 난간처럼 오므린 채 촉수 줄기에 들려 올라간다
+ */
 export class PetalLift {
+  static TOP = 0.22;
+  constructor(template = null) {
+    if (!template) return new PetalLiftSimple();
+    this.object = template.clone(true);
+    this.object.traverse((o) => {
+      if (o.isMesh && o.material.userData.glow) {
+        // Material.clone은 userData를 JSON으로 복사해 Color가 숫자가 되므로 다시 넣는다
+        const glow = o.material.userData.glow.clone();
+        o.material = o.material.clone();
+        o.material.userData.glow = glow;
+      }
+    });
+    this.petals = [];
+    this.glows = [];
+    this.object.traverse((o) => {
+      if (o.name.startsWith('Lift_Petal')) this.petals.push({ node: o, rest: o.quaternion.clone(), phase: this.petals.length });
+      if (o.isMesh && o.material.userData.glow) this.glows.push(o);
+    });
+    this.top = PetalLift.TOP;
+    this.ride = 0; // 0 대기, 0~1 접힘, 1 이상 상승
+    this.near = 0;
+    this._q = new THREE.Quaternion();
+    this._x = new THREE.Vector3(1, 0, 0);
+  }
+  update(dt, t, playerDist = 99) {
+    const fold = Math.min(1, this.ride);
+    this.near += ((playerDist < 4.5 && this.ride === 0 ? 1 : 0) - this.near) * Math.min(1, dt * 3);
+    // + 방향이 오므림: 대기 44° → 다가오면 64° → 탑승 14°
+    const angle = -this.near * 0.35 * (1 - fold) + fold * 0.52;
+    for (const p of this.petals) {
+      this._q.setFromAxisAngle(this._x, angle + Math.sin(t * 1.8 + p.phase) * 0.025);
+      p.node.quaternion.copy(p.rest).multiply(this._q);
+    }
+    const pulse = 0.75 + Math.sin(t * 2.2) * 0.12 + this.near * 0.2 + fold * 0.3;
+    for (const g of this.glows) setBrightness(g, pulse);
+    this.object.position.y = this.baseY + Math.max(0, this.ride - 1) * 6;
+  }
+}
+
+class PetalLiftSimple {
   constructor() {
+    this.top = 0.3;
     this.object = new THREE.Group();
     const disc = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.2, 0.3, 40), softMat('#F3EAFF', 0.05));
     disc.position.y = 0.15;
