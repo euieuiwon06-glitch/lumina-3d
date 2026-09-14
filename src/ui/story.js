@@ -51,34 +51,82 @@ export function createTitle(root, actions) {
     ),
   );
   confirmBox.hidden = true;
+  // 배경: 포스터(항상 깔림) 위에 타이틀 반복 영상, 그 위에 첫 진입 오프닝 영상.
+  // 오프닝 마지막 프레임 = 반복 영상 첫 프레임이라, 반복 영상이 실제로 재생되기 시작한 뒤 오프닝을 치워 검은 화면이 없다
+  const poster = assetUrl('ui/title_poster.png');
+  const loopVideo = h('video', { class: 'title-video', src: assetUrl('ui/title_loop.mp4'), poster, muted: true, loop: true, playsInline: true, preload: 'auto', 'aria-hidden': 'true' });
+  const openingVideo = h('video', { class: 'title-video is-opening', src: assetUrl('ui/opening.mp4'), muted: true, playsInline: true, preload: 'auto', 'aria-hidden': 'true' });
+  for (const v of [loopVideo, openingVideo]) {
+    // 속성만으로는 자동재생 음소거가 보장되지 않는 브라우저가 있어 속성값으로도 둔다
+    v.muted = true;
+    v.defaultMuted = true;
+    v.setAttribute('muted', '');
+    v.setAttribute('playsinline', '');
+  }
+  const skipBtn = h('button', { class: 'btn btn-quiet title-skip', type: 'button', onClick: () => endOpening() }, '건너뛰기', icon('play'));
+  const card = h(
+    'div',
+    { class: 'title-card' },
+    h('h1', { id: 'titleLogo', class: 'intro-logo' }, h('img', { src: assetUrl('ui/logo.png'), alt: 'LUMINA' })),
+    h('p', { class: 'title-tagline' }, '우리, 다시 떠나볼까?'),
+    h('p', { class: 'intro-lead' }, '빛들이 박자를 잃고 멈춘 우주 해파리. 나만의 빛을 만들고 이웃과 나누어 첫 숨결을 되살려요.'),
+    h('div', { class: 'title-actions' }, contBtn, newBtn),
+    contNote,
+    confirmBox,
+    h('p', { class: 'intro-note' }, '주민과 함께하는 단일 플레이어 데모 · 약 15분'),
+  );
   const el = h(
     'section',
     { class: 'overlay title-screen', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'titleLogo' },
-    h('div', { class: 'intro-bg', style: { backgroundImage: `url("${assetUrl('ui/voyage.jpg')}")` }, 'aria-hidden': 'true' }),
-    h(
-      'div',
-      { class: 'title-card' },
-      h('h1', { id: 'titleLogo', class: 'intro-logo' }, h('img', { src: assetUrl('ui/logo.png'), alt: 'LUMINA' })),
-      h('p', { class: 'intro-lead' }, '우주 해파리 속 도시의 빛들이 박자를 잃고 항해가 멈췄어요.'),
-      h('p', { class: 'intro-lead' }, '나만의 빛을 만들고 이웃과 나누어, 해파리의 첫 숨결을 되살려요.'),
-      h('div', { class: 'title-actions' }, contBtn, newBtn),
-      contNote,
-      confirmBox,
-      h('p', { class: 'intro-note' }, '주민과 함께하는 단일 플레이어 데모 · 약 15분'),
-    ),
+    h('div', { class: 'title-media', style: { backgroundImage: `url("${poster}")` }, 'aria-hidden': 'true' }, loopVideo, openingVideo),
+    card,
+    skipBtn,
   );
   el.hidden = true;
   root.append(el);
   let release = null;
+  let opening = false;
+  let fallbackTimer = 0;
+  let focusTarget = newBtn;
   function hideConfirm() {
     confirmBox.hidden = true;
     newBtn.focus();
   }
+  const playSafe = (v) => v.play()?.catch?.(() => {});
+  function showCard() {
+    el.classList.remove('is-opening');
+    skipBtn.hidden = true;
+    card.inert = false;
+    focusTarget.focus({ preventScroll: true });
+  }
+  function startLoop() {
+    playSafe(loopVideo);
+  }
+  function endOpening() {
+    if (!opening) return;
+    opening = false;
+    clearTimeout(fallbackTimer);
+    showCard();
+    // 반복 영상이 재생되면(또는 이미 재생 중이면) 오프닝을 치운다. 반복 영상이 실패해도 포스터가 남는다
+    const drop = () => openingVideo.classList.add('is-gone');
+    if (!loopVideo.paused && loopVideo.readyState >= 3) drop();
+    else {
+      loopVideo.addEventListener('playing', drop, { once: true });
+      loopVideo.addEventListener('error', drop, { once: true });
+      startLoop();
+      setTimeout(drop, 1500);
+    }
+    openingVideo.pause();
+  }
+  openingVideo.addEventListener('ended', endOpening);
+  openingVideo.addEventListener('error', endOpening);
+  loopVideo.addEventListener('error', () => loopVideo.classList.add('is-gone'));
   return {
     get open() {
       return !el.hidden;
     },
-    show({ hasSave, name, legacy }) {
+    /** playOpening: 첫 진입이면 오프닝 영상부터(건너뛰기 가능), 아니면 바로 타이틀 반복 영상 */
+    show({ hasSave, name, legacy, playOpening = false }) {
       contBtn.disabled = !hasSave;
       contBtn.setAttribute('aria-describedby', 'continueNote');
       contNote.textContent = hasSave
@@ -89,7 +137,35 @@ export function createTitle(root, actions) {
       confirmBox.hidden = true;
       el.hidden = false;
       release = trapFocus(el, null);
-      (hasSave ? contBtn : newBtn).focus();
+      focusTarget = hasSave ? contBtn : newBtn;
+      openingVideo.classList.remove('is-gone');
+      loopVideo.classList.remove('is-gone');
+      if (playOpening) {
+        opening = true;
+        el.classList.add('is-opening');
+        skipBtn.hidden = false;
+        card.inert = true;
+        skipBtn.focus();
+        openingVideo.currentTime = 0;
+        loopVideo.load(); // 반복 영상을 미리 받아 둔다(끝 전환 때 바로 재생)
+        playSafe(openingVideo);
+        // 영상이 늦거나 자동재생이 막히거나 재생이 멈춰 버리면(시간이 흐르지 않음) 포스터+타이틀로
+        const started = performance.now();
+        const watch = () => {
+          if (!opening) return;
+          const elapsed = (performance.now() - started) / 1000;
+          const stuck = elapsed > 3.5 && (openingVideo.paused || openingVideo.readyState < 2 || openingVideo.currentTime < 0.5);
+          const overdue = Number.isFinite(openingVideo.duration) && elapsed > openingVideo.duration + 4;
+          if (stuck || overdue || elapsed > 40) endOpening();
+          else fallbackTimer = setTimeout(watch, 500);
+        };
+        fallbackTimer = setTimeout(watch, 500);
+      } else {
+        opening = false;
+        openingVideo.classList.add('is-gone');
+        showCard();
+        startLoop();
+      }
     },
     confirmNew() {
       confirmBox.hidden = false;
@@ -97,6 +173,10 @@ export function createTitle(root, actions) {
     },
     hide() {
       el.hidden = true;
+      opening = false;
+      clearTimeout(fallbackTimer);
+      openingVideo.pause();
+      loopVideo.pause();
       release?.();
       release = null;
     },

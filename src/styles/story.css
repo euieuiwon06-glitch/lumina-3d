@@ -102,7 +102,66 @@
 /* ------------------------------------------------ 시작 화면: 화면 정중앙 */
 .title-screen {
   z-index: 45;
-  place-items: center;
+  /* 오프닝 영상은 오른쪽에 캐릭터와 빛, 왼쪽 약 40%를 타이틀 UI 자리로 비워 두었다 */
+  place-items: center start;
+  padding-left: 5.5%;
+}
+.title-media {
+  position: absolute;
+  inset: 0;
+  background: #2d2f7a center / cover no-repeat;
+  overflow: hidden;
+}
+.title-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.title-video.is-gone {
+  visibility: hidden;
+}
+/* 왼쪽이 읽히도록 은은하게 어둡게(영상 쪽은 그대로) */
+.title-media::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(38, 30, 96, 0.42), rgba(38, 30, 96, 0.12) 42%, rgba(38, 30, 96, 0) 60%);
+  transition: opacity 0.8s ease;
+}
+.title-screen.is-opening .title-media::after {
+  opacity: 0;
+}
+.title-screen .title-card {
+  width: min(560px, 40%);
+  min-width: 440px;
+  transition:
+    opacity 0.9s ease,
+    transform 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.title-screen.is-opening .title-card {
+  opacity: 0;
+  transform: translateX(-24px);
+  pointer-events: none;
+}
+.title-tagline {
+  margin: 6px 0 10px;
+  font-size: 30px;
+  font-weight: 800;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.title-skip {
+  position: absolute;
+  right: 40px;
+  bottom: 36px;
+  gap: 8px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .title-screen .title-card {
+    transition: none;
+  }
 }
 .title-card {
   position: relative;

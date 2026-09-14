@@ -2370,7 +2370,14 @@ async function boot() {
     await enterScene();
   } else {
     view.mode = 'title';
-    title.show({ hasSave: loaded.hasSave, name: state.profile.name, legacy: loaded.legacy || LEGACY_KEYS.some((k) => storage?.getItem(k)) });
+    // 첫 진입(이 탭에서 처음)에는 오프닝 영상부터. ?skipIntro·움직임 줄이기면 바로 타이틀
+    let openingSeen = false;
+    try {
+      openingSeen = sessionStorage.getItem('lumina-opening-video') === '1';
+      sessionStorage.setItem('lumina-opening-video', '1');
+    } catch {}
+    const playOpening = !openingSeen && !params.has('skipIntro') && !settings.reducedMotion;
+    title.show({ hasSave: loaded.hasSave, name: state.profile.name, legacy: loaded.legacy || LEGACY_KEYS.some((k) => storage?.getItem(k)), playOpening });
     refresh();
   }
 

@@ -77,12 +77,16 @@ async function travel(exitId, sceneId) {
 // ------------------------------------------------------------------ 시작 화면
 await page.goto('http://localhost:5190/?reset');
 await waitFor(() => window.lumina && document.querySelector('.title-screen:not([hidden])'), 90000);
+// 오프닝 영상이 나오면 건너뛰기(건너뛰기 뒤 타이틀 패널이 떠야 함)
+if (await page.locator('.title-skip:not([hidden])').count()) await page.locator('.title-skip').click();
+await page.waitForTimeout(1000);
 await sleep(600);
 const rect = await ev(() => {
   const r = document.querySelector('.title-card').getBoundingClientRect();
   return { cx: r.left + r.width / 2, cy: r.top + r.height / 2, w: innerWidth, h: innerHeight };
 });
-ok('시작 패널이 화면 정중앙', Math.abs(rect.cx - rect.w / 2) < rect.w * 0.02 && Math.abs(rect.cy - rect.h / 2) < rect.h * 0.03, JSON.stringify(rect));
+// 오프닝 영상 구도: 오른쪽에 캐릭터·빛, 타이틀 패널은 왼쪽 40% 안에서 세로 가운데
+ok('시작 패널이 왼쪽 영역 세로 가운데', rect.cx < rect.w * 0.4 && Math.abs(rect.cy - rect.h / 2) < rect.h * 0.03, JSON.stringify(rect));
 ok('저장 없으면 이어하기 비활성', await page.locator('.title-card .btn-quiet').first().isDisabled());
 await shot('title');
 await click('.title-card .btn-primary');
@@ -265,6 +269,9 @@ ok('새 지역 빛 발견', (await S()).unlocks.includes('auroraLight'));
 const before = await S();
 await page.reload();
 await waitFor(() => window.lumina && document.querySelector('.title-screen:not([hidden])'), 90000);
+// 오프닝 영상이 나오면 건너뛰기(건너뛰기 뒤 타이틀 패널이 떠야 함)
+if (await page.locator('.title-skip:not([hidden])').count()) await page.locator('.title-skip').click();
+await page.waitForTimeout(1000);
 ok('이어하기 활성', !(await page.locator('.title-card .btn-quiet').first().isDisabled()));
 await click('.title-card .btn-quiet');
 await waitMode('play');
