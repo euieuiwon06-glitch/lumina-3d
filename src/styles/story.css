@@ -215,7 +215,7 @@
   inset: -12px;
   background: #3b3f9a center / cover no-repeat;
   /* 화사하게: 채도·밝기를 올리고 흐림을 더해 카드가 떠 보이게 */
-  filter: blur(6px) saturate(1.35) brightness(1.1) contrast(1.02);
+  filter: blur(6px) saturate(1.35) brightness(1.21) contrast(1.02);
   transform: scale(1.04);
 }
 .creator-bg::after {
