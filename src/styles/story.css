@@ -207,6 +207,25 @@
 }
 
 /* ------------------------------------------------ 내 모습 만들기 */
+.creator-layer {
+  overflow: hidden;
+}
+.creator-bg {
+  position: absolute;
+  inset: -12px;
+  background: #3b3f9a center / cover no-repeat;
+  filter: blur(3px) saturate(1.05);
+  transform: scale(1.02);
+}
+.creator-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 50%, rgba(60, 46, 120, 0.28), rgba(60, 46, 120, 0.08) 70%);
+}
+.creator-layer .story-card {
+  position: relative;
+}
 .creator {
   display: grid;
   grid-template-columns: 420px 1fr;

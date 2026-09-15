@@ -206,6 +206,9 @@ export function createCreator(root, actions) {
   const back = h('button', { class: 'btn btn-quiet btn-lg', type: 'button', onClick: () => actions.closeCreator() }, '돌아가기');
   const title = h('h2', { class: 'qm-title', id: 'creatorTitle' }, '내 모습 만들기');
   const m = modalLayer(root, 'creator', 'creatorTitle');
+  // 뒤 배경: 단색 대신 해파리 도시 일러스트(살짝 흐리게 해 카드가 읽히게)
+  m.layer.classList.add('creator-layer');
+  m.layer.prepend(h('div', { class: 'creator-bg', style: { backgroundImage: `url("${assetUrl('ui/creator_bg.jpg')}")` }, 'aria-hidden': 'true' }));
   m.box.append(
     h('div', { class: 'creator-preview' }, canvas, h('div', { class: 'creator-preview-tools' }, waveBtn), baseDesc),
     h(
