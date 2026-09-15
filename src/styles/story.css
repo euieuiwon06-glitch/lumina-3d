@@ -228,7 +228,7 @@
     radial-gradient(ellipse at 85% 85%, rgba(255, 220, 190, 0.18), rgba(255, 220, 190, 0) 50%),
     radial-gradient(ellipse at 50% 50%, rgba(120, 96, 210, 0.1), rgba(120, 96, 210, 0) 70%),
     /* 살짝 딤: 전체를 옅은 보라빛으로 한 톤 가라앉힘 */
-    rgba(40, 30, 90, 0.14);
+    rgba(40, 30, 90, 0.3);
 }
 .creator-layer .story-card {
   position: relative;
