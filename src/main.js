@@ -1045,9 +1045,10 @@ async function boot() {
       if (!W.benchOpened) return '둥근 작업대에 다가가 **E**로 잠든 빛을 깨워요';
       return view.panel?.kind === 'craft' ? '**색**을 고르고 **첫 빛 완성하기**를 눌러요' : '작업대에서 **E**를 눌러 첫 빛을 완성해요';
     }
-    if (S.quests.q02 === 'available') return sc === 'workshop' ? '**빛기둥 문**으로 나가 캡슐 마을의 살구를 만나요' : sc === 'neighborhood' ? '촉수 다리 문 앞의 **살구**와 이야기해요' : null;
+    if (S.quests.q02 === 'available') return sc === 'workshop' ? '**빛기둥 문**에 걸어 들어가거나 **E**를 눌러 **캡슐 마을**로 나가요' : sc === 'neighborhood' ? '촉수 다리 문 앞의 **살구**와 이야기해요' : null;
     if (S.quests.q02 === 'active') {
-      if (sc !== 'walkway') return '**촉수 다리**로 가요 · 살구가 첫 등불 앞에서 기다려요';
+      if (sc === 'neighborhood') return '**빛기둥 문**에 걸어 들어가거나 **E**를 눌러 **촉수 다리**로 가요';
+      if (sc !== 'walkway') return '**빛기둥 문**으로 캡슐 마을에 나가 **촉수 다리**로 가요';
       if (!S.slots.lantern) return '첫 등불에 다가가 **E**로 내 빛을 놓아요';
       if (!W.tuned) return view.panel?.kind === 'tune' ? '등불이 **가장 밝을 때 E**를 눌러요' : '등불 앞에서 **E**로 어긋난 박자를 맞춰요';
       return null;
@@ -1143,12 +1144,15 @@ async function boot() {
     const p = actors.player.position;
     let best = null;
     let bestD = Infinity;
+    // 지금 목표(안내 대상)가 가까우면 E는 그쪽이 먼저. 따라오는 동행 주민이 문 앞을 가로채지 않게
+    const goal = hintTarget();
     for (const s of spots) {
       if (s.disabled) continue;
       const sp = s.live ? s.live() : s.pos;
       const d = Math.hypot(sp.x - p.x, sp.z - p.z);
       if (d > s.radius || Math.abs(sp.y - p.y) > 2.2) continue;
-      const score = d - (s.kind === 'npc' ? 0.6 : 0) - (s.kind === 'tune' ? 0.3 : 0);
+      const companion = s.kind === 'npc' && view.companion === s.id;
+      const score = d - (s.kind === 'npc' && !companion ? 0.6 : 0) + (companion ? 2 : 0) - (s.kind === 'tune' ? 0.3 : 0) - (s === goal ? 1.5 : 0);
       if (score < bestD) {
         bestD = score;
         best = s;
@@ -1179,7 +1183,7 @@ async function boot() {
     if (best.kind === 'exit') {
       const why = best.exit.lockedUntil?.(state);
       locked = !!why;
-      verb = locked ? '닫혀 있어요' : best.exit.kind === 'dock' ? '해파리 타기' : best.exit.kind === 'lift' ? '승강대 타기' : '문 지나가기';
+      verb = locked ? '닫혀 있어요' : best.exit.kind === 'dock' ? '해파리 타기' : best.exit.kind === 'lift' ? '승강대 타기' : '이동하기';
     }
     const sp = best.live ? best.live() : best.pos;
     return { ...best, verb, locked, anchor: project(sp, best.lift) };
@@ -1947,7 +1951,10 @@ async function boot() {
       for (const { ex, pos, door, walkThrough } of props.doors) {
         if (door.locked || !walkThrough) continue;
         const target = LINKS[`${state.scene}:${ex.at}`]?.[0];
-        if (!target || !state.positions[target]) continue;
+        // 가 본 곳이거나, 지금 안내하는 목표 문이면 빛기둥 안으로 걸어 들어가기만 해도 이동
+        const goal = hintTarget();
+        const isGoal = goal?.kind === 'exit' && goal.id === ex.at;
+        if (!target || !(state.positions[target] || isGoal)) continue;
         const d = Math.hypot(player.position.x - pos.x, player.position.z - pos.z);
         const toward = dir.x * (pos.x - player.position.x) + dir.z * (pos.z - player.position.z) > 0;
         if (d < 0.9 && toward) {
