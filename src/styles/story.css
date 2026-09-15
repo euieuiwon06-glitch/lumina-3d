@@ -214,14 +214,19 @@
   position: absolute;
   inset: -12px;
   background: #3b3f9a center / cover no-repeat;
-  filter: blur(3px) saturate(1.05);
-  transform: scale(1.02);
+  /* 화사하게: 채도·밝기를 올리고 흐림을 더해 카드가 떠 보이게 */
+  filter: blur(6px) saturate(1.35) brightness(1.1) contrast(1.02);
+  transform: scale(1.04);
 }
 .creator-bg::after {
   content: '';
   position: absolute;
   inset: 0;
-  background: radial-gradient(ellipse at 50% 50%, rgba(60, 46, 120, 0.28), rgba(60, 46, 120, 0.08) 70%);
+  /* 어둡게 누르던 막 대신 라일락·살구빛을 은은하게 얹는다 */
+  background:
+    radial-gradient(ellipse at 18% 20%, rgba(255, 214, 236, 0.22), rgba(255, 214, 236, 0) 55%),
+    radial-gradient(ellipse at 85% 85%, rgba(255, 220, 190, 0.18), rgba(255, 220, 190, 0) 50%),
+    radial-gradient(ellipse at 50% 50%, rgba(120, 96, 210, 0.1), rgba(120, 96, 210, 0) 70%);
 }
 .creator-layer .story-card {
   position: relative;
