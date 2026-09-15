@@ -64,6 +64,29 @@ export function createTitle(root, actions) {
     v.setAttribute('playsinline', '');
   }
   const skipBtn = h('button', { class: 'btn btn-quiet title-skip', type: 'button', onClick: () => endOpening() }, '건너뛰기', icon('play'));
+  // 오프닝 자막(도입 이야기): 영상 컷에 맞춰 띄운다. 컷 = 해파리 외경 0~10초, 멈춘 도시 10~16초, 제작실 16~26초
+  const CUES = [
+    { from: 1.0, to: 9.4, text: '빛들의 박자가 어긋나면서 해파리의 항해가 멈췄어요.' },
+    { from: 10.5, to: 15.7, text: '산책로의 등불은 꺼지고, 판석 다리는 흩어져 이웃들이 만나지 못해요.' },
+    { from: 16.8, to: 23.6, text: '작은 빛 하나가 제작실에서 깨어나요.' },
+  ];
+  const cueText = h('h2', { class: 'qm-title' });
+  const caption = h('div', { class: 'chapter-banner hud-panel title-caption', role: 'status', 'aria-live': 'polite' }, h('p', { class: 'qm-eyebrow' }, '첫 번째 숨결'), cueText);
+  caption.hidden = true;
+  let cueIndex = -1;
+  function updateCaption() {
+    const t = openingVideo.currentTime;
+    const i = opening ? CUES.findIndex((c) => t >= c.from && t < c.to) : -1;
+    if (i === cueIndex) return;
+    cueIndex = i;
+    caption.hidden = i < 0;
+    if (i < 0) return;
+    cueText.textContent = CUES[i].text;
+    caption.classList.remove('is-in');
+    void caption.offsetWidth;
+    caption.classList.add('is-in');
+  }
+  openingVideo.addEventListener('timeupdate', updateCaption);
   const card = h(
     'div',
     { class: 'title-card' },
@@ -80,6 +103,7 @@ export function createTitle(root, actions) {
     { class: 'overlay title-screen', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'titleLogo' },
     h('div', { class: 'title-media', style: { backgroundImage: `url("${poster}")` }, 'aria-hidden': 'true' }, loopVideo, openingVideo),
     card,
+    caption,
     skipBtn,
   );
   el.hidden = true;
@@ -106,6 +130,7 @@ export function createTitle(root, actions) {
     if (!opening) return;
     opening = false;
     clearTimeout(fallbackTimer);
+    updateCaption();
     showCard();
     // 반복 영상이 재생되면(또는 이미 재생 중이면) 오프닝을 치운다. 반복 영상이 실패해도 포스터가 남는다
     const drop = () => openingVideo.classList.add('is-gone');
@@ -175,6 +200,7 @@ export function createTitle(root, actions) {
       el.hidden = true;
       opening = false;
       clearTimeout(fallbackTimer);
+      updateCaption();
       openingVideo.pause();
       loopVideo.pause();
       release?.();

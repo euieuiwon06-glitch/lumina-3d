@@ -1701,68 +1701,10 @@ async function boot() {
     await enterScene({ label: `${SCENE_INFO[state.scene].name}에 닿는 중…` });
   }
 
-  // ------------------------------------------------------------------ 도입 연출
+  // ------------------------------------------------------------------ 첫 깨어남
+  // 도입 이야기(멈춘 항해·꺼진 산책로·흩어진 다리)는 시작 화면의 오프닝 영상 자막으로 옮겼다.
+  // 내 모습을 정하면 바로 제작실에서 깨어난다
   async function playOpening() {
-    view.mode = 'loading';
-    refresh();
-    fader.show('멈춘 해파리를 바라보는 중…');
-    const openScene = 'walkway';
-    try {
-      await buildScene(openScene, (p) => fader.progress(p));
-    } catch {
-      dispatch({ type: 'seeOpening' });
-      return enterScene();
-    }
-    view.mode = 'cinematic';
-    refresh();
-    fader.hide();
-    const gate = props.gate;
-    // 첫 등불 → 접힌 다리 → 꺼져 가는 산책로 등불을 차례로 비춘다
-    const p0 = gate ? gate.pointAt(0) : V3();
-    let a = p0.clone().add(V3(-7, 3.2, 10));
-    let b = p0.clone().add(V3(-3.5, 2.2, 5.5));
-    let look = gate ? gate.pointAt(0.12).add(V3(0, 0.8, 0)) : V3();
-    if (gate?.center) {
-      // 흩어진 판석 다리를 등불 쪽 비스듬한 위에서 내려다본다
-      const back = p0.clone().sub(gate.center).setY(0).normalize();
-      const side = V3(-back.z, 0, back.x);
-      a = gate.center.clone().addScaledVector(back, 12).addScaledVector(side, 4).add(V3(0, 5, 0));
-      b = gate.center.clone().addScaledVector(back, 8).addScaledVector(side, 2.5).add(V3(0, 3.2, 0));
-      look = gate.center.clone().add(V3(0, -0.8, 0));
-    }
-    const lines = ['빛들의 박자가 어긋나면서 해파리의 항해가 멈췄어요.', '산책로의 등불은 꺼지고, 판석 다리는 흩어져 이웃들이 만나지 못해요.', `작은 빛 ${state.profile.name}이(가) 제작실에서 깨어나요.`];
-    const dur = settings.reducedMotion ? 4 : 9;
-    let t = 0;
-    let shown = -1;
-    await new Promise((resolve) => {
-      cinematic = {
-        update(dt) {
-          t += dt;
-          const k = Math.min(1, t / dur);
-          const e = k * k * (3 - 2 * k);
-          camera.position.lerpVectors(a, b, settings.reducedMotion ? 0.5 : e);
-          camera.lookAt(look);
-          const idx = Math.min(lines.length - 1, Math.floor(k * lines.length));
-          if (idx !== shown) {
-            shown = idx;
-            banner.show('첫 번째 숨결', lines[idx], '', dur * 1000);
-          }
-          // 등불이 하나씩 꺼져 간다
-          [...props.lanterns.values()].forEach((l, i) => {
-            l.state = k < 0.2 + i * 0.12 ? 'on' : 'off';
-          });
-          if (k >= 1) this.finish();
-        },
-        finish() {
-          cinematic = null;
-          resolve();
-        },
-        skip() {
-          this.finish();
-        },
-      };
-      toast.show('Esc 또는 클릭으로 건너뛸 수 있어요.', 3000);
-    });
     dispatch({ type: 'seeOpening' });
     await enterScene({ label: '빛 제작실에서 깨어나는 중…' });
     // 창밖을 향해 한 번 시점을 돌려 목표 방향을 보여 준다

@@ -77,8 +77,13 @@ async function travel(exitId, sceneId) {
 // ------------------------------------------------------------------ 시작 화면
 await page.goto('http://localhost:5190/?reset');
 await waitFor(() => window.lumina && document.querySelector('.title-screen:not([hidden])'), 90000);
-// 오프닝 영상이 나오면 건너뛰기(건너뛰기 뒤 타이틀 패널이 떠야 함)
-if (await page.locator('.title-skip:not([hidden])').count()) await page.locator('.title-skip').click();
+// 오프닝 영상: 첫 컷 자막(멈춘 항해)이 뜨는지 본 뒤 건너뛰기(건너뛰기 뒤 타이틀 패널이 떠야 함)
+if (await page.locator('.title-skip:not([hidden])').count()) {
+  await waitFor(() => /멈췄/.test(document.querySelector('.title-caption:not([hidden]) .qm-title')?.textContent ?? ''), 15000).catch(() => {});
+  ok('오프닝 영상 자막(멈춘 항해)', /멈췄/.test(await ev(() => document.querySelector('.title-caption:not([hidden]) .qm-title')?.textContent ?? '')));
+  await shot('opening');
+  await page.locator('.title-skip').click();
+}
 await page.waitForTimeout(1000);
 await sleep(600);
 const rect = await ev(() => {
@@ -112,12 +117,7 @@ await click('.creator .qm-actions .btn-primary');
 let st = await S();
 ok('캐릭터 저장', st.profile.created && st.profile.base === 'sprout' && st.profile.body === 'mint' && st.profile.name === '반짝이');
 
-// ------------------------------------------------------------------ 도입 연출
-await waitFor(() => window.lumina.view.mode === 'cinematic', 60000);
-await sleep(3500);
-await shot('opening');
-ok('도입 자막(멈춘 항해·꺼진 산책로)', /멈췄|꺼지고/.test(await ev(() => document.querySelector('.chapter-banner:not([hidden]) .qm-title')?.textContent ?? '')));
-await page.keyboard.press('Escape');
+// ------------------------------------------------------------------ 첫 깨어남(도입 이야기는 오프닝 영상 자막으로 이동)
 await waitMode('play');
 st = await S();
 ok('제작실에서 깨어남', st.scene === 'workshop' && st.quests.q01 === 'active');
