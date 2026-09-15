@@ -136,6 +136,8 @@ export const SCENE_INFO = {
     icon: 'sun',
     destination: true,
     start: 'ENTRY_해파리외부항해_착륙지점',
+    // 길 가장자리 둔덕(약 0.4m)을 넘어 길 한가운데로 걸어 들어갈 수 있게 한 번에 오를 수 있는 높이를 조금 높인다
+    walkStep: 0.36,
     exits: [
       { at: 'ENTRY_해파리외부항해_착륙지점', label: '해파리로 돌아가기', kind: 'dock' },
       { at: 'EXIT_길굽이_먼섬조망', label: '먼 섬 조망', kind: 'door', lockedUntil: () => '먼 섬으로 가는 길은 아직 구름에 덮여 있어요.' },

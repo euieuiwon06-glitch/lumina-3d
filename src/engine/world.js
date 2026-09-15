@@ -19,6 +19,23 @@ const texLoader = new THREE.TextureLoader();
 /** 블렌더 와트 → three 광도(cd). 점광원: L = Pρ/(4π²d²) 기준을 three(L = Iρ/(πd²))에 맞춘 값 */
 const W_TO_CD = 1 / (4 * Math.PI);
 const POOL = 8;
+
+/** 조명 없는(구운) 재질의 최종 색 보정: 채도(saturation)·밝기(gain)·어두운 곳 띄움(lift) */
+function gradeMaterial(material, { saturation = 1, gain = 1, lift = [0, 0, 0] }) {
+  const f = (v) => Number(v).toFixed(4);
+  material.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <opaque_fragment>',
+      `{
+        float lum = dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722));
+        outgoingLight = mix(vec3(lum), outgoingLight, ${f(saturation)}) * ${f(gain)} + vec3(${f(lift[0])}, ${f(lift[1])}, ${f(lift[2])});
+      }
+      #include <opaque_fragment>`,
+    );
+  };
+  material.customProgramCacheKey = () => `grade-${saturation}-${gain}-${lift.join(',')}`;
+}
+
 const GLOW_MATERIALS = { M_QuestVeinMint: '#C4F7E4', M_QuestGlowPeach: '#FFE2C4' };
 
 // 장면별 보정(파노라마 밝기·환경광·조명). 검수 스크린샷을 기준 렌더와 비교해 조정
@@ -28,7 +45,15 @@ export const LOOK = {
   nursery: { env: 0.7, lights: 1.0, exposure: 1.0, sun: 1.0, saturation: 1.45 },
   walkway: { env: 0.7, lights: 1.0, exposure: 1.0, sun: 1.0, saturation: 1.45 },
   overlook: { env: 0.7, lights: 1.0, exposure: 1.0, sun: 1.0, saturation: 1.45 },
-  ice: { env: 0.7, lights: 1.0, exposure: 0.95, sun: 1.0, saturation: 1.45 },
+  // 얼음 성운: 구운 색이 회청색으로 가라앉아 보여 채도·밝기를 올리고 라일락·민트빛을 살짝 더한다
+  ice: {
+    env: 0.7,
+    lights: 1.0,
+    exposure: 0.95,
+    sun: 1.0,
+    saturation: 1.45,
+    grade: { saturation: 1.6, gain: 1.16, lift: [0.03, 0.02, 0.06], sky: { saturation: 1.45, gain: 1.1, lift: [0.02, 0.01, 0.05] } },
+  },
   solar: { env: 0.6, lights: 1.0, exposure: 0.8, sun: 1.0, saturation: 1.2 },
   twilight: { env: 0.7, lights: 1.0, exposure: 1.0, sun: 1.0, saturation: 1.45 },
 };
@@ -101,6 +126,12 @@ export class World {
     pano.colorSpace = THREE.SRGBColorSpace;
     pano.mapping = THREE.EquirectangularReflectionMapping;
     this.skyMat.map = pano;
+    // 장면별 색 보정(하늘도 같은 톤으로): 없으면 원래 셰이더
+    if (look.grade) gradeMaterial(this.skyMat, look.grade.sky ?? look.grade);
+    else {
+      this.skyMat.onBeforeCompile = () => {};
+      this.skyMat.customProgramCacheKey = () => 'sky-plain';
+    }
     this.skyMat.needsUpdate = true;
     this.panoTex = pano;
     this.envRT = this.pmrem.fromEquirectangular(pano);
@@ -141,6 +172,7 @@ export class World {
             depthWrite: !(m.transparent || m.opacity < 1),
           });
           b.name = m.name;
+          if (look.grade) gradeMaterial(b, look.grade);
           m.dispose();
           return b;
         });

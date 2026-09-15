@@ -666,8 +666,9 @@ export class Glimmer {
   update(t) {
     this.object.visible = !this.found;
     const k = Math.pow(Math.max(0, Math.sin(t * 2.4 + this.phase)), 4);
-    this.object.scale.setScalar(0.4 + k * 0.7);
-    this.object.material.opacity = 0.35 + k * 0.65;
+    // 멀리서도 눈에 띄게 조금 크게, 늘 은은히 보이게
+    this.object.scale.setScalar(0.75 + k * 0.9);
+    this.object.material.opacity = 0.55 + k * 0.45;
   }
 }
 

@@ -731,6 +731,7 @@ async function boot() {
     clearSceneProps();
     const info = SCENE_INFO[id];
     const dyn = world.dynamic;
+    if (world.grid && info.walkStep) world.grid.step = info.walkStep;
     applyGate();
     computeReach();
 
@@ -1056,7 +1057,7 @@ async function boot() {
     if (S.quests.q02 === 'completed') return '다리를 건너 **살구**에게 알려요';
     if (S.quests.q03 === 'available') return sc === 'walkway' ? '다리 건너 교환 정원의 **리본**과 이야기해요' : '촉수 다리를 건너 **리본**을 만나요';
     if (S.quests.q03 === 'active') {
-      if (!W.budAwake) return view.glimmersFound.size < props.glimmers.length ? `봉오리 주변의 **반짝임**을 살펴요 (${view.glimmersFound.size} / 3)` : '닫힌 봉오리에 다가가 **E**로 깨워요';
+      if (!W.budAwake) return view.glimmersFound.size < props.glimmers.length ? `봉오리 주변 **반짝이는 빛**을 클릭하거나 다가가 **E**로 살펴요 (${view.glimmersFound.size} / 3)` : '닫힌 봉오리에 다가가 **E**로 깨워요';
       if (!W.traded) return '**리본**에게 말해 빛을 나눠요';
       if (!W.woven) return '**리본**에게 말해 두 빛을 엮어요';
     }
@@ -1102,7 +1103,15 @@ async function boot() {
   function updateGuide() {
     if (!settings.guide || !actors.player) return hideGuide();
     const target = guideTarget(state);
-    const spot = target && spots.find((s) => s.kind === target.kind && s.id === target.id && !s.disabled);
+    let spot = target && spots.find((s) => s.kind === target.kind && s.id === target.id && !s.disabled);
+    // 닫힌 봉오리처럼 목표가 아직 잠겨 있으면(반짝임을 먼저 찾아야 할 때) 지금 해야 할 대상(반짝임)을 가리킨다
+    if (target?.final && !spot) {
+      const h = hintTarget();
+      if (h) {
+        spot = h;
+        target.label = h.name;
+      }
+    }
     // 목표 대상 패널을 열고 있으면 안내는 잠시 숨긴다
     const busy = view.panel && ((view.panel.kind === 'craft' && target?.kind === 'workbench') || view.panel.kind === 'tune' || (view.panel.kind === 'slot' && target?.id === view.panel.id));
     if (!spot || busy) return hideGuide();
