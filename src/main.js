@@ -7,7 +7,7 @@ import * as THREE from 'three';
 
 import { chime, isMuted, setMuted, softBuzz, unlockAudio } from './engine/audio.js';
 import { FollowCamera } from './engine/camera.js';
-import { Character, loadCharacters } from './engine/character.js';
+import { Character, loadCharacters, setShadowBase } from './engine/character.js';
 import { CharacterPreview } from './engine/preview.js';
 import { GroundRing, LightProp, SongCrystal, Sparkles, glowTexture, preloadLightImages, starTexture } from './engine/props.js';
 import { clientToStage, mountStage, stage } from './engine/stage.js';
@@ -942,6 +942,8 @@ async function boot() {
   /** 장면을 불러와 구성한다. sceneId를 주면 연출용(플레이어 없이) */
   async function buildScene(id, onProgress) {
     await world.load(id, onProgress);
+    // 돌 질감 장면은 지면이 요철만큼 솟으므로 그림자를 그 위로
+    setShadowBase(0.02 + (world.look.rock?.amp ?? 0));
     clearSceneProps();
     const info = SCENE_INFO[id];
     const dyn = world.dynamic;

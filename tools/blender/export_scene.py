@@ -35,7 +35,13 @@ CONFIG = {
     'nursery':   dict(far=[], walk=['ENV_바닥_Walkable']),
     'solar':     dict(far=['ENV_구름바다_CloudSea', 'ENV_먼섬_DistantIslands', 'ENV_하늘_행성_태양_Sky'],
                       walk=['ENV_대지선반_Walkable', 'ENV_길_Path']),
-    'twilight':  dict(far=['ENV_먼섬_지평선_Distant', 'ENV_하늘_달_Sky'], walk=['ENV_디딤테라스_Walkable']),
+    # rough: (요철을 줄 재질, 진폭 m). 표면을 실제로 울퉁불퉁하게 만들지만 Draco 압축이
+    # 크게 나빠진다 — 같은 조건에서 GLB가 진폭 0m 4.1MB, 2cm 14.8MB, 5cm 15.6MB로
+    # 진폭과 거의 무관하게 +11MB 늘었다(면의 규칙성이 깨지는 것 자체가 원인).
+    # 그래서 여기서는 꺼 두고, 같은 노이즈 장으로 웹에서 그릴 때 정점을 민다(src/engine/rock.js,
+    # LOOK.twilight.rock). 파일 크기는 그대로다. 굽기에는 재질 얼룩·범프(rock_texture.py)만 들어간다.
+    'twilight':  dict(far=['ENV_먼섬_지평선_Distant', 'ENV_하늘_달_Sky'], walk=['ENV_디딤테라스_Walkable'],
+                      rough=({'M_IvoryTerrace', 'M_IvoryTerraceSide', 'M_LilacBank', 'M_LilacBankUnder', 'M_LilacSoil'}, 0.0)),
     'ice':       dict(far=['ENV_원경_산맥_바다_해파리'], walk=['ENV_얼음대지_Walkable', 'ENV_계단테라스_징검다리', 'ENV_도착선착장_Dock']),
 }
 cfg = CONFIG[SID]
@@ -371,7 +377,8 @@ if '--no-glb' not in FLAGS:
                 for attr in ('visible_shadow', 'visible_diffuse', 'visible_glossy', 'visible_transmission', 'visible_volume_scatter'):
                     setattr(o, attr, False)
         baker.bake_vertex_colors([o for o in objs if o.type in ('MESH', 'CURVE')], scene, log,
-                                 samples=int(os.environ.get('LUMINA_BAKE_SAMPLES', '128')))
+                                 samples=int(os.environ.get('LUMINA_BAKE_SAMPLES', '128')),
+                                 rough=cfg.get('rough'))
         # 정점 색 = 블렌더 뷰 변환을 거친 표시 색
         meta['baked'] = dict(display=True, view=scene.view_settings.view_transform, look=scene.view_settings.look)
         with open(json_path, 'w', encoding='utf-8') as f:

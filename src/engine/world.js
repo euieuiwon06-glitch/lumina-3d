@@ -5,6 +5,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
 
 import { decodeGrid } from './walkgrid.js';
+import { applyRock } from './rock.js';
 import { createWaterMaterial } from './water.js';
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
@@ -60,7 +61,15 @@ export const LOOK = {
     grade: { saturation: 1.6, gain: 1.16, lift: [0.03, 0.02, 0.06], sky: { saturation: 1.45, gain: 1.1, lift: [0.02, 0.01, 0.05] } },
   },
   solar: { env: 0.6, lights: 1.0, exposure: 0.8, sun: 1.0, saturation: 1.2 },
-  twilight: { env: 0.7, lights: 1.0, exposure: 1.0, sun: 1.0, saturation: 1.45 },
+  // 황혼 합류지: 매끈하게 떨어지던 테라스·둔덕에 돌 질감(요철·굴곡 음영·잔 알갱이, src/engine/rock.js)
+  twilight: {
+    env: 0.7,
+    lights: 1.0,
+    exposure: 1.0,
+    sun: 1.0,
+    saturation: 1.45,
+    rock: { mats: ['M_IvoryTerrace', 'M_IvoryTerraceSide', 'M_LilacBank', 'M_LilacBankUnder', 'M_LilacSoil'], amp: 0.05, shade: 0.12, grain: 0.14 },
+  },
 };
 
 function loadJSON(url) {
@@ -188,6 +197,7 @@ export class World {
           });
           b.name = m.name;
           if (look.grade) gradeMaterial(b, look.grade);
+          if (look.rock?.mats.includes(m.name)) applyRock(b, look.rock);
           m.dispose();
           return b;
         });

@@ -1,6 +1,6 @@
 # 원본 룩 보존: Cycles로 조명·GI·발광·절차적 무늬를 정점 색에 굽는다.
 #   웹에서는 굽힌 값을 조명 계산 없이 그대로 보여주고(AgX 톤매핑만), 캐릭터만 실시간 조명을 쓴다.
-import bpy, bmesh, math
+import bpy, bmesh, math, os
 import numpy as np
 
 # 정점 색에는 블렌더 뷰 변환(AgX Punchy 등)을 거친 표시 색을 담는다 → 웹에서는 톤매핑 없이 그대로
@@ -59,15 +59,65 @@ def densify(o):
     me.update()
 
 
+# 표면 질감: 굽기 직전에 정점을 살짝 밀어 매끈하게 떨어지던 면·모서리를 깬다.
+# 정점마다 제 법선 방향으로 밀면 맞붙은 조각 사이가 벌어지므로, 월드 좌표 하나에
+# 벡터 하나가 정해지는 장(場)을 만들어 같은 자리의 정점은 같은 방향으로 민다(틈 없음).
+ROUGH_WAVES = (
+    # (파장 m, 가중치, 방향)
+    (3.4, 1.00, (0.80, 0.42, 0.43)),
+    (2.1, 0.62, (-0.35, 0.86, 0.37)),
+    (1.3, 0.38, (0.55, -0.62, 0.56)),
+    (0.9, 0.22, (-0.74, -0.30, 0.60)),
+)
+
+
+def roughen(o, amp):
+    """월드 좌표 기준 벡터 노이즈만큼 정점을 민다. amp는 미터."""
+    import numpy as np
+
+    me = o.data
+    n = len(me.vertices)
+    if not n or amp <= 0:
+        return
+    co = np.empty(n * 3, dtype=np.float64)
+    me.vertices.foreach_get('co', co)
+    co = co.reshape(n, 3)
+    mw = np.array(o.matrix_world.to_3x3())
+    world = co @ mw.T + np.array(o.matrix_world.translation)
+
+    def field(phase):
+        h = np.zeros(n)
+        wsum = 0.0
+        for i, (wl, w, d) in enumerate(ROUGH_WAVES):
+            d = np.array(d, dtype=np.float64)
+            d /= np.linalg.norm(d)
+            h += np.sin(world @ d * (2 * np.pi / wl) + phase + i * 1.7) * w
+            wsum += w
+        return h / wsum
+
+    offset = np.stack([field(0.0), field(2.4), field(4.9)], axis=1) * amp
+    # 오브젝트 로컬 좌표로 되돌려서 더한다
+    co += offset @ np.linalg.inv(mw).T
+    me.vertices.foreach_set('co', co.ravel())
+    me.update()
+
+
 def flat_shaded(me):
     return not any(p.use_smooth for p in me.polygons)
 
 
-def bake_vertex_colors(objs, scene, log, samples=96, saturation=1.0):
+def bake_vertex_colors(objs, scene, log, samples=96, saturation=1.0, rough=None):
     apply_and_single_user(objs)
     tris = 0
+    rough_mats, rough_amp = (rough or (None, 0))
+    if os.environ.get('LUMINA_ROUGH') is not None:
+        rough_amp = float(os.environ['LUMINA_ROUGH'])
+    roughened = 0
     for o in objs:
         densify(o)
+        if rough_mats and {s.material.name for s in o.material_slots if s.material} & rough_mats:
+            roughen(o, rough_amp)
+            roughened += 1
         me = o.data
         dom = 'CORNER' if flat_shaded(me) else 'POINT'
         if 'LuminaBake' in me.color_attributes:
@@ -81,6 +131,8 @@ def bake_vertex_colors(objs, scene, log, samples=96, saturation=1.0):
         me.calc_loop_triangles()
         tris += len(me.loop_triangles)
     log(f'굽기 대상 {len(objs)}개, 조밀화 후 {tris:,} tris')
+    if roughened:
+        log(f'표면 요철 {roughened}개 오브젝트, 진폭 {rough_amp}m')
 
     scene.render.engine = 'CYCLES'
     dev = enable_gpu(scene, log)
@@ -92,9 +144,13 @@ def bake_vertex_colors(objs, scene, log, samples=96, saturation=1.0):
     for o in objs:
         o.select_set(True)
     vl.objects.active = objs[0]
-    log(f'Cycles 굽기 시작({dev}, {samples} samples)')
-    bpy.ops.object.bake(type='COMBINED', target='VERTEX_COLORS', use_clear=True)
-    log('굽기 완료')
+    if os.environ.get('LUMINA_SKIP_BAKE'):
+        # 크기·형태만 볼 때 쓰는 지름길(색은 비어 있다). 검수용이라 배포에는 쓰지 않는다
+        log('굽기 건너뜀(LUMINA_SKIP_BAKE)')
+    else:
+        log(f'Cycles 굽기 시작({dev}, {samples} samples)')
+        bpy.ops.object.bake(type='COMBINED', target='VERTEX_COLORS', use_clear=True)
+        log('굽기 완료')
 
     # 1) 정점 노이즈 줄이기: 부드러운 면은 이웃 정점과 평균(각진 면은 그대로)
     datas = []

@@ -39,6 +39,11 @@ function blobShadowTexture() {
   return t;
 }
 let shadowTex = null;
+// 바닥에서 그림자를 띄우는 높이. 돌 질감처럼 GPU에서 지면을 솟게 하는 장면은 그만큼 올린다
+let shadowBase = 0.02;
+export function setShadowBase(v) {
+  shadowBase = v;
+}
 
 /** 파츠 역할 이름(메시가 여러 재질로 쪼개진 경우 부모 노드 이름을 본다) */
 export function roleOf(o) {
@@ -106,7 +111,7 @@ export class Character {
       new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, toneMapped: false }),
     );
     this.shadow.rotation.x = -Math.PI / 2;
-    this.shadow.position.y = 0.02;
+    this.shadow.position.y = shadowBase;
     this.shadow.renderOrder = 1;
     this.object.add(this.shadow);
 
@@ -308,7 +313,7 @@ export class Character {
     }
     // 그림자는 바닥에 남는다: 뛰어오른 높이(lift)만큼 내려 두고, 높을수록 작고 옅게
     const lift = Math.max(0, this.shadowLift ?? 0);
-    this.shadow.position.y = 0.02 - lift;
+    this.shadow.position.y = shadowBase - lift;
     const far = Math.min(1, lift / 1.2);
     this.shadow.scale.setScalar((1 - Math.abs(Math.sin(this.phase)) * 0.08 * w) * (1 - far * 0.35));
     this.shadow.material.opacity = 1 - far * 0.45;
