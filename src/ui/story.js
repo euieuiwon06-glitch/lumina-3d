@@ -66,7 +66,7 @@ export function createTitle(root, actions) {
   const skipBtn = h('button', { class: 'btn btn-quiet title-skip', type: 'button', onClick: () => endOpening() }, '건너뛰기', icon('play'));
   // 오프닝 자막(도입 이야기): 영상 컷에 맞춰 띄운다. 컷 = 해파리 외경 0~10초, 멈춘 도시 10~16초, 제작실 16~26초
   const CUES = [
-    { from: 1.0, to: 9.4, text: '빛들의 박자가 어긋나면서 해파리의 항해가 멈췄어요.' },
+    { from: 1.0, to: 9.4, text: '길을 알려 주던 빛의 흔적이 흩어지면서 해파리의 항해가 멈췄어요.' },
     { from: 10.5, to: 15.7, text: '산책로의 등불은 꺼지고, 판석 다리는 흩어져 이웃들이 만나지 못해요.' },
     { from: 16.8, to: 23.6, text: '작은 빛 하나가 제작실에서 깨어나요.' },
   ];
@@ -92,7 +92,7 @@ export function createTitle(root, actions) {
     { class: 'title-card' },
     h('h1', { id: 'titleLogo', class: 'intro-logo' }, h('img', { src: assetUrl('ui/logo.png'), alt: 'LUMINA' })),
     h('p', { class: 'title-tagline' }, '우리, 다시 떠나볼까?'),
-    h('p', { class: 'intro-lead' }, '빛들이 박자를 잃고 멈춘 우주 해파리. 나만의 빛을 만들고 이웃과 나누어 첫 숨결을 되살려요.'),
+    h('p', { class: 'intro-lead' }, '우주 해파리의 작은 마을에서 나만의 빛을 만들고, 이웃과 나누며, 빛으로 새로운 길을 찾아요.'),
     h('div', { class: 'title-actions' }, contBtn, newBtn),
     contNote,
     confirmBox,
@@ -460,7 +460,7 @@ export function createRoutePanel(root, actions) {
   const cancel = h('button', { class: 'btn btn-quiet btn-lg', type: 'button', onClick: () => actions.routeCancel() }, '조금 더 둘러보기');
   m.box.append(
     h('p', { class: 'qm-eyebrow' }, '항해사 보라의 해석'),
-    h('h2', { class: 'qm-title', id: 'routeTitle' }, '빛이 읽어 낸 두 항로'),
+    h('h2', { class: 'qm-title', id: 'routeTitle' }, '빛이 드러낸 항로'),
     cards,
     h('div', { class: 'qm-actions' }, cancel, sail),
   );
@@ -469,10 +469,11 @@ export function createRoutePanel(root, actions) {
     get open() {
       return m.open;
     },
-    show(current) {
-      chosen = current ?? null;
+    /** list: 지금 고를 수 있는 항로(없으면 전체) */
+    show(current, list = ROUTES) {
+      chosen = list.some((r) => r.id === current) ? current : null;
       cards.replaceChildren(
-        ...ROUTES.map((r) => {
+        ...list.map((r) => {
           const b = h(
             'button',
             { class: 'route-card', type: 'button', role: 'radio', onClick: () => pick(r.id) },
@@ -525,7 +526,7 @@ export function createVoyageCinematic(root, actions) {
   let release = null;
   let raf = 0;
   const stars = Array.from({ length: 180 }, () => ({ x: Math.random() * 2 - 1, y: Math.random() * 2 - 1, z: Math.random() }));
-  const tints = { solar: [255, 196, 150], ice: [170, 240, 220], overlook: [220, 210, 255] };
+  const tints = { solar: [255, 196, 150], ice: [170, 240, 220], twilight: [255, 178, 196], overlook: [220, 210, 255] };
   return {
     get open() {
       return !el.hidden;

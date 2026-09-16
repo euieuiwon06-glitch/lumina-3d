@@ -18,6 +18,9 @@ export const COLORS = [
   { id: 'lilac', label: '라일락빛', hex: '#C9B2F2', temp: -0.1 },
   { id: 'sky', label: '하늘빛', hex: '#A6C6FF', temp: -0.8 },
   { id: 'sunset', label: '노을빛', hex: '#FF9480', temp: 1, unlock: 'sunset' },
+  // 먼 곳에서 얻는 지역의 빛(발견물로 열림)
+  { id: 'sunbeam', label: '햇살빛', hex: '#FFD98A', temp: 0.9, unlock: 'sunLight' },
+  { id: 'aurora', label: '오로라빛', hex: '#8FF3DE', temp: -0.9, unlock: 'auroraLight' },
 ];
 
 export const MOTIONS = [
@@ -26,6 +29,8 @@ export const MOTIONS = [
   { id: 'spin', label: '회전' },
   { id: 'twinkle', label: '점멸' },
   { id: 'slowpulse', label: '천천히 맥동', unlock: 'slowpulse' },
+  // 지나간 자리에 잠깐 빛이 남는다(얼음 속 흔적에서 배움)
+  { id: 'afterglow', label: '잔상', unlock: 'afterglow' },
 ];
 
 export const MATERIALS = {
@@ -44,6 +49,8 @@ export const UNLOCKS = {
   petalScarf: { label: '꽃잎 목도리', icon: 'flower' },
   sunLight: { label: '햇살 씨앗의 빛', icon: 'orb' },
   auroraLight: { label: '오로라 결정의 빛', icon: 'crystal' },
+  afterglow: { label: '잔상을 남기는 빛', icon: 'thread' },
+  twilightRoute: { label: '황혼 합류지로 가는 항로', icon: 'orb' },
 };
 
 /** 장면 안에서 한 번만 얻는 발견물 */
@@ -54,10 +61,30 @@ export const DISCOVERIES = {
   twilightShard: { label: '따뜻함과 차가움의 공명 조각', scene: 'twilight', items: [{ kind: 'material', id: 'shard', amount: 1 }] },
 };
 
-/** 첫 항해에서 고를 수 있는 목적지(구현된 지역만) */
+/** 항해 나무가 드러낸 목적지(구현된 지역만). requires: 그 항로를 여는 해금 */
 export const ROUTES = [
   { id: 'solar', label: '태양 정원', desc: '살구빛 꽃과 둥근 정원 섬이 떠 있는 따뜻한 곳', gift: '햇살 씨앗의 빛', warm: true },
   { id: 'ice', label: '얼음 성운', desc: '민트 결정과 오로라가 흐르는 차가운 곳', gift: '오로라 결정의 빛', warm: false },
+  { id: 'twilight', label: '황혼 합류지', desc: '두 흔적이 함께 가리킨 노을빛 계단섬', gift: '공명 조각', warm: true, requires: 'twilightRoute' },
+];
+
+// ------------------------------------------------------------------ 빛의 성질(퀘스트 대상의 반응)
+export const isCoolLight = (l) => !!l && (byId(COLORS, l.color)?.temp ?? 0) <= -0.5;
+/** 꽃: 은은할수록 편안히 열린다. 부드럽게 퍼지는 안개 형태는 조금 밝아도 괜찮다 */
+export function flowerReaction(l) {
+  if (!l) return 'none';
+  const soft = l.form === 'mist' ? 70 : 45;
+  if (l.brightness <= soft) return 'open';
+  if (l.brightness <= 70) return 'half';
+  return 'shrink';
+}
+/** 작은 해파리가 따라올 빛: 눈부시지 않은 빛 */
+export const GUIDE_SOFT = 60;
+/** 답장 세 지점: 용도마다 필수 조건 하나(색·형태는 자유) */
+export const REPLY_SPOTS = [
+  { slot: 'replyRest', label: '쉼터의 은은한 빛', need: '밝기 60 이하', check: (l) => !!l && l.brightness <= 60 },
+  { slot: 'replyPath', label: '산책길의 길잡이 빛', need: '밝기 50 이상', check: (l) => !!l && l.brightness >= 50 },
+  { slot: 'replySignal', label: '전망대의 신호 빛', need: '밝기 80 이상', check: (l) => !!l && l.brightness >= 80 },
 ];
 
 // ------------------------------------------------------------------ 내 모습 만들기

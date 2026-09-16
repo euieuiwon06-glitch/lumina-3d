@@ -13,21 +13,22 @@ import { GroundRing, LightProp, SongCrystal, Sparkles, glowTexture, preloadLight
 import { clientToStage, mountStage, stage } from './engine/stage.js';
 import { BridgeGate, BudPod, Glimmer, GuideWisp, Lantern, LightFlow, LightGate, loadLiftTemplate, NavBeacon, PetalLift, SlabBridge, SleepingBud } from './engine/story-props.js';
 import { ObjectiveMarker, PathTrail } from './engine/guide-fx.js';
+import { DistantReplies, GlowPath, HiddenFlower, IceGlyph, LittleJelly, OrganBranches, StrangeLight } from './engine/story2-props.js';
 import { guideTarget } from './game/guide.js';
 import { airMove, cellCenter, findPath, floodReachable, groundAt, nearestReachable, nearestWalkable, pickGround, smoothGround, stepMove, supportAt } from './engine/walkgrid.js';
 import { loadVoyageAssets, VoyageScene } from './engine/voyage.js';
 import { BASE, gltfLoader, World } from './engine/world.js';
-import { BASES, BODY_COLORS, CHEST_COLORS, DISCOVERIES, MATERIALS, UNLOCKS, byId, lightName } from './game/catalog.js';
+import { BASES, BODY_COLORS, CHEST_COLORS, DISCOVERIES, GUIDE_SOFT, MATERIALS, REPLY_SPOTS, UNLOCKS, byId, lightName } from './game/catalog.js';
 import { BRANCH_LINES, dialogueFor } from './game/dialogue.js';
 import { createPuzzle, finishListening, listen, press } from './game/puzzle.js';
 import { GIVER_NAMES, QUESTS, carriedLights, isDestination, lightAt } from './game/quests.js';
 import { NPCS, SCENE_INFO, npcsInScene } from './game/scenes.js';
-import { LEGACY_KEYS, LINKS, SAVE_KEY, SCENES, canDepart, createInitialState, isDiscovered, loadState, reduce, saveState, slotAvailability } from './game/state.js';
+import { LEGACY_KEYS, LINKS, SAVE_KEY, SCENES, availableRoutes, canDepart, createInitialState, isDiscovered, lightInHand, loadState, reduce, replyReady, saveState, slotAvailability } from './game/state.js';
 import { autoTune, createTuning, glowAt, press as tunePressLogic, start as tuneStart } from './game/tuning.js';
 import { assetUrl } from './ui/assets.js';
 import { createHud } from './ui/hud.js';
 import { createFader, createToast } from './ui/overlays.js';
-import { createBubble, createCraftPanel, createPrompt, createPuzzlePanel, createSlotPanel } from './ui/panels.js';
+import { createBubble, createCraftPanel, createPrompt, createPuzzlePanel, createSlotPanel, createUsePanel } from './ui/panels.js';
 import {
   createBanner,
   createControlsHelp,
@@ -138,6 +139,8 @@ async function boot() {
     target: null,
     glimmersFound: new Set(),
     companion: null,
+    useResult: null, // 빛 비추기 패널의 마지막 반응 { text, tone }
+    traceRunning: false,
     lastProgress: performance.now(),
     wispAt: 0,
     arrivedAt: 0,
@@ -169,6 +172,14 @@ async function boot() {
     glimmers: [],
     flows: [],
     discoveries: new Map(),
+    // 두 번째 이야기
+    strange: null,
+    flower: null,
+    glyphs: [],
+    jelly: null,
+    guidePts: [],
+    branches: null,
+    replies: null,
   };
   let reach = null;
   let gridOriginal = null;
@@ -228,6 +239,33 @@ async function boot() {
     reshape() {
       const carried = carriedLights(state).filter((l) => l.origin === 'crafted');
       if (carried.length) dispatch({ type: 'reshapeLight', lightId: carried[carried.length - 1].id });
+    },
+    // 두 번째 이야기: 대상에 들고 있는 빛을 비춘다(빛은 사라지지 않음)
+    useLight() {
+      const p = view.panel;
+      if (p?.kind !== 'use') return;
+      unlockAudio();
+      const type = { flower: 'lightFlower', iceTrace: 'lightIceTrace', guidePt: 'guideLight' }[p.target];
+      if (!type) return;
+      if (!lightInHand(state)) {
+        view.useResult = { text: '들고 있는 빛이 없어요. ‘빛 빚기·조절’로 여기서 바로 빚어요.', tone: 'warn' };
+        refresh();
+        return;
+      }
+      dispatch({ type, index: p.index });
+    },
+    readTrace() {
+      const p = view.panel;
+      if (p?.kind !== 'use') return;
+      if (p.target === 'flower') dispatch({ type: 'readFlowerClue' });
+      if (p.target === 'iceTrace') dispatch({ type: 'readIceClue' });
+    },
+    fieldCraft() {
+      const p = view.panel;
+      if (p?.kind !== 'use') return;
+      view.panel = { kind: 'craft', id: 'field', back: { ...p } };
+      refresh();
+      craftPanel.el.querySelector('.chip.is-selected')?.focus({ preventScroll: true });
     },
     closePanel,
     requestDepart,
@@ -426,6 +464,7 @@ async function boot() {
   const craftPanel = createCraftPanel(uiRoot, actions);
   const puzzlePanel = createPuzzlePanel(uiRoot, actions);
   const tuningPanel = createTuningPanel(uiRoot, actions);
+  const usePanel = createUsePanel(uiRoot, actions);
   const hint = createHint(uiRoot);
   const banner = createBanner(uiRoot);
   const toast = createToast(uiRoot);
@@ -495,8 +534,104 @@ async function boot() {
       } else if (e.type === 'chapterDone') {
         setTimeout(() => banner.show('첫 챕터 완료', '첫 번째 숨결', '해파리가 우리가 만든 빛을 따라 새로운 곳에 닿았어요.', 6500), 400);
       } else if (e.type === 'benchOpened') dispatchTutorial('bench');
+      else handleStoryEvent(e);
     }
     if (granted.length) setTimeout(() => toast.show(`받았어요: ${granted.join(', ')}`), 1200);
+  }
+
+  /** 두 번째 이야기: 빛을 비춘 결과를 대상의 반응으로 보여 준다 */
+  function handleStoryEvent(e) {
+    const npcNear = (id) => actors.npcs.find((n) => n.id === id && n.char.object.visible);
+    const speak = (id, text) => {
+      const n = npcNear(id);
+      if (n) bubble.show(`${n.name}: ${text}`, () => project(n.char.position, n.char.height + 0.2));
+    };
+    const result = (text, tone) => {
+      view.useResult = { text, tone };
+    };
+    if (e.type === 'traceSeen') {
+      setTimeout(() => toast.show('새 목표: ‘누군가 남긴 빛’ · 따뜻한 곳과 차가운 곳에 남은 흔적을 찾아요.', 5000), 300);
+    } else if (e.type === 'flowerReact') {
+      props.flower?.flower.react(e.result);
+      if (e.result === 'open') {
+        chime(880, 0.9, 0.1);
+        sparkles.burst(props.flower.pos.clone().add(V3(0, 1.2, 0)), 26, settings.reducedMotion);
+        result('꽃잎이 천천히 열렸어요! 안쪽에 햇살 무늬가 남아 있어요. ‘꽃 속 흔적 살피기’를 눌러요.', 'good');
+        speak('salguSolar', '열렸다! 눈부시지 않으니까 안심했나 봐.');
+      } else if (e.result === 'half') {
+        softBuzz();
+        result('꽃잎이 조금 떨리다 멈췄어요. 아직 조금 눈부신가 봐요 — 밝기를 더 낮추거나 안개 형태로 퍼뜨려 봐요.', 'mid');
+        speak('salguSolar', '거의 다 왔어. 조금만 더 부드럽게!');
+      } else {
+        softBuzz();
+        result('꽃이 꽃잎을 꼭 오므렸어요. 너무 밝아서 숨은 것 같아요. 밝기를 낮춰 봐요.', 'warn');
+        speak('salguSolar', '앗, 눈부신가 봐. 빛을 좀 줄여 볼까?');
+      }
+    } else if (e.type === 'iceReact') {
+      const gl = props.glyphs.find((x) => x.i === e.index);
+      if (e.ok) {
+        bubble.hide();
+        gl?.g.setRevealed(true);
+        chime(698.46 + e.index * 110, 0.8, 0.1);
+        if (gl) sparkles.burst(gl.pos.clone().add(V3(0, 1.4, 0)), 18, settings.reducedMotion);
+        const left = 3 - state.story.iceTraces.length;
+        result(left ? `결정 속 무늬가 떠올랐어요! 이어진 선이 다음 결정을 가리켜요. (남은 흔적 ${left})` : '세 무늬가 이어져 한 방향을 가리켜요. ‘흔적의 방향 읽기’를 눌러요.', 'good');
+        if (!left) speak('ribbonIce', '봐, 선이 이어졌어! 누군가 여기로 길을 그려 뒀구나.');
+      } else {
+        gl?.g.faintFlash();
+        softBuzz();
+        result('결정이 잠깐 흐리게 비쳤다가 사라졌어요. 차가운 빛(민트·오로라 계열)을 넓게 퍼지게 비춰 봐요.', 'warn');
+        speak('ribbonIce', '따뜻한 빛에는 얼음이 잘 안 비치나 봐. 차가운 빛으로 해 보자.');
+      }
+    } else if (e.type === 'clueFound') {
+      chime(1046.5, 1, 0.1);
+      closePanel(true);
+      const two = state.story.clues.length >= 2;
+      banner.show(
+        '흔적을 찾았어요',
+        e.id === 'solar' ? '햇살 꽃이 품은 흔적' : '얼음 결정이 그린 흔적',
+        two ? '두 흔적이 모였어요. 보라에게 보여 주고 항해 나무에서 엮어요.' : '보라에게 보여 주면 이어 볼 수 있어요.',
+        5000,
+      );
+      if (e.id === 'solar') setTimeout(() => speak('salguSolar', '이 꽃, 이제 계속 피어 있을 거야. 나 여기서 좀 더 지켜볼래.'), 2000);
+      else setTimeout(() => speak('ribbonIce', '결정 빛은 오래 남으니까, 다음에 와도 길이 보일 거야.'), 2000);
+    } else if (e.type === 'cluesWoven') {
+      chime(1318.5, 1.4, 0.08);
+    } else if (e.type === 'jellyMet') {
+      view.lastProgress = performance.now();
+    } else if (e.type === 'jellyReact') {
+      const pj = props.jelly;
+      const gp = props.guidePts.find((g) => g.i === e.index);
+      if (e.ok && pj) {
+        bubble.hide();
+        gp?.path.light(true, e.afterglow);
+        pj.jelly.swimTo(pj.stops[e.index]);
+        chime(659.25 + e.index * 130, 0.8, 0.1);
+        if (gp) sparkles.burst(gp.pos.clone().add(V3(0, 0.8, 0)), 16, settings.reducedMotion);
+        result(
+          e.step >= 3
+            ? '작은 해파리가 빛길을 끝까지 따라왔어요!'
+            : `작은 해파리가 은은한 빛을 따라 헤엄쳐 왔어요.${e.afterglow ? ' 잔상이 길을 오래 남겨 줘요.' : ''} 다음 지점으로 가요.`,
+          'good',
+        );
+        if (e.step >= 3) {
+          closePanel(true);
+          setTimeout(() => banner.show('이쪽으로 와도 괜찮아', '작은 해파리가 선착장에 닿았어요', '보라에게 돌아가 이야기를 전해요.', 5500), 900);
+        }
+      } else {
+        pj?.jelly.flinch();
+        softBuzz();
+        result('작은 해파리가 움찔하며 멈췄어요. 너무 밝아요 — 밝기를 낮춘 부드러운 빛으로 다시 비춰요. (제자리에서 기다려요)', 'warn');
+      }
+    } else if (e.type === 'cluesShown') {
+      view.lastProgress = performance.now();
+    } else if (e.type === 'replySent') {
+      view.lastProgress = performance.now();
+    } else if (e.type === 'questClaimed' && e.id === 'trace') {
+      setTimeout(() => toast.show('새 항로 ‘황혼 합류지’가 열렸어요. 항해 나무에서 골라요.', 4500), 1600);
+    } else if (e.type === 'questAccepted' && QUESTS[e.id]?.auto && e.id === 'guide') {
+      toast.show('새 목표: ‘이쪽으로 와도 괜찮아’ · 황혼 합류지로 항해해요.', 4500);
+    }
   }
 
   function dispatchTutorial(id) {
@@ -512,7 +647,7 @@ async function boot() {
   function refresh() {
     const info = SCENE_INFO[state.scene];
     const blocked = view.mode !== 'play';
-    for (const el of [hud.elements.left, hud.elements.right, hud.elements.palette, hud.elements.dockWrap, hud.elements.camRow, prompt.el, slotPanel.el, craftPanel.el, puzzlePanel.el, tuningPanel.el]) {
+    for (const el of [hud.elements.left, hud.elements.right, hud.elements.palette, hud.elements.dockWrap, hud.elements.camRow, prompt.el, slotPanel.el, craftPanel.el, puzzlePanel.el, tuningPanel.el, usePanel.el]) {
       el.inert = blocked;
     }
     // 항해 중에도 HUD를 숨겨 3D 해파리 연출이 화면을 채운다
@@ -551,10 +686,82 @@ async function boot() {
     const p = view.panel;
     const slotEntry = p?.kind === 'slot' ? props.slots.get(p.id) : null;
     slotPanel.update({ state, slot: slotEntry?.slot ?? null, anchor: slotEntry ? project(slotEntry.pos, 1.0) : null, player });
-    const bench = spots.find((s) => s.kind === 'workbench');
-    craftPanel.update({ state, open: p?.kind === 'craft', anchor: bench ? project(bench.pos, 1.2) : null, player });
+    // 퀘스트 대상 앞에서 연 작업대는 그 대상 옆에 뜬다
+    const backSpot = p?.kind === 'craft' && p.back ? useSpot(p.back) : null;
+    const bench = backSpot ?? spots.find((s) => s.kind === 'workbench');
+    craftPanel.update({ state, open: p?.kind === 'craft', anchor: bench ? project(bench.pos, 1.2) : null, player, field: backSpot ? useInfo(p.back)?.title : null });
+    const us = p?.kind === 'use' ? useSpot(p) : null;
+    usePanel.update({ info: us ? useInfo(p) : null, anchor: us ? project(us.pos, 1.2) : null, player });
     puzzlePanel.update({ state, view, open: p?.kind === 'puzzle', muted: isMuted(), glow: props.crystals.map((c) => c.glow) });
     tuningPanel.update(p?.kind === 'tune' ? view.tuning : null, time);
+  }
+
+  // ------------------------------------------------------------------ 빛 비추기(두 번째 이야기)
+  function useSpot(panel) {
+    if (!panel) return null;
+    return spots.find((s) => s.kind === panel.target && s.id === panel.id) ?? null;
+  }
+
+  /** 빛 비추기 패널 내용: 대상이 원하는 성질(한두 가지)과 들고 있는 빛, 마지막 반응 */
+  function useInfo(panel) {
+    const T = state.story;
+    const L = lightInHand(state);
+    const r = view.useResult;
+    if (panel.target === 'flower') {
+      const readable = T.flowerOpen && !T.clues.includes('solar');
+      return {
+        title: '숨은 꽃',
+        where: '태양 정원 · 태양씨앗 숲',
+        needIcon: 'sun',
+        need: T.flowerOpen ? '꽃이 편안하게 열렸어요. 안쪽의 낯선 빛을 살펴봐요.' : '밝은 빛에는 몸을 오므려요. 은은한 빛(밝기를 낮추거나 부드럽게 퍼지는 안개 형태)을 비춰 봐요.',
+        light: L,
+        result: r?.text,
+        resultTone: r?.tone,
+        useLabel: '꽃에 빛 비추기',
+        canUse: state.quests.flower === 'active' && !T.flowerOpen,
+        readLabel: readable ? '꽃 속 흔적 살피기' : null,
+      };
+    }
+    if (panel.target === 'iceTrace') {
+      const readable = T.iceTraces.length >= 3 && !T.clues.includes('ice');
+      const noAurora = !isDiscovered(state, 'iceAurora');
+      return {
+        title: readable ? '이어진 흔적' : `결정 속 흔적 ${panel.index + 1} / 3`,
+        where: '얼음 성운 · 수정 바위',
+        needIcon: 'sparkle',
+        need: readable
+          ? '세 흔적이 한 줄로 이어졌어요. 흔적이 가리키는 방향을 읽어요.'
+          : `차가운 빛(민트·하늘·오로라빛)을 비추면 문양이 드러나요.${noAurora ? ' 오로라 결정에서 이곳의 빛을 먼저 받아도 좋아요.' : ''}`,
+        light: L,
+        result: r?.text,
+        resultTone: r?.tone,
+        useLabel: '결정에 빛 비추기',
+        canUse: state.quests.icepath === 'active',
+        readLabel: readable ? '흔적의 방향 읽기' : null,
+      };
+    }
+    if (panel.target === 'guidePt') {
+      return {
+        title: `빛길 지점 ${panel.index + 1} / 3`,
+        where: panel.index === 2 ? '황혼 합류지 · 선착장 곁' : '황혼 합류지 · 계단섬 길',
+        needIcon: 'heart',
+        need: `작은 해파리는 눈부신 빛에 다가오지 않아요. 밝기 ${GUIDE_SOFT} 이하의 은은한 빛을 놓아요. 잔상 빛이면 길이 오래 남아요.`,
+        light: L,
+        result: r?.text,
+        resultTone: r?.tone,
+        useLabel: '여기에 빛길 놓기',
+        canUse: state.quests.guide === 'active' && state.story.jellyMet,
+        readLabel: null,
+      };
+    }
+    return null;
+  }
+
+  function openUse(spot) {
+    view.useResult = null;
+    view.panel = { kind: 'use', target: spot.kind, id: spot.id, index: spot.index ?? 0 };
+    refresh();
+    usePanel.el.querySelector('.btn-primary:not([disabled]):not([hidden]), .btn:not([disabled]):not([hidden])')?.focus({ preventScroll: true });
   }
 
   // ------------------------------------------------------------------ 캐릭터
@@ -719,6 +926,13 @@ async function boot() {
     props.glimmers = [];
     props.flows = [];
     props.discoveries.clear();
+    props.strange = null;
+    props.flower = null;
+    props.glyphs = [];
+    props.jelly = null;
+    props.guidePts = [];
+    props.branches = null;
+    props.replies = null;
     actors.npcs = [];
     gridOriginal = null;
     view.glimmersFound = new Set();
@@ -874,6 +1088,11 @@ async function boot() {
         const f2 = new LightFlow(flowR, '#B9E6D3', 18);
         dyn.add(f1.object, f2.object);
         props.flows.push(f1, f2);
+        // 단서마다 돋는 빛 가지, 답장에 응답할 먼 빛
+        props.tree = tree.clone();
+        props.branches = new OrganBranches(tree);
+        props.replies = new DistantReplies(tree, 46);
+        dyn.add(props.branches.object, props.replies.object);
       }
     }
 
@@ -909,9 +1128,84 @@ async function boot() {
         addSpot({ kind: 'puzzle', id: 'puzzle', name: info.puzzle.label, pos: center, radius: 3.2, lift: 2.2 });
       }
     }
+    buildStoryProps(info, dyn);
     follow.colliders = world.colliders;
     syncProps();
     if (params.has('debug')) drawDebugGrid();
+  }
+
+  /** 경로(격자 경유점)를 따라 비율 k(0~1)의 위치 */
+  function routePoint(route, k) {
+    const pts = route.map((p) => V3(p.x, p.y, p.z));
+    const lens = [0];
+    for (let i = 1; i < pts.length; i++) lens.push(lens[i - 1] + pts[i].distanceTo(pts[i - 1]));
+    const want = lens[lens.length - 1] * k;
+    for (let i = 1; i < pts.length; i++) {
+      if (lens[i] >= want) return pts[i - 1].clone().lerp(pts[i], (want - lens[i - 1]) / Math.max(1e-4, lens[i] - lens[i - 1]));
+    }
+    return pts[pts.length - 1].clone();
+  }
+
+  /** 두 번째 이야기 공간 요소(기존 지역에 배치만 한다) */
+  function buildStoryProps(info, dyn) {
+    if (info.trace) {
+      props.strange = new StrangeLight();
+      dyn.add(props.strange.object);
+    }
+    if (info.flower) {
+      const pos = markerGround(info.flower.at, info.flower.offset);
+      if (pos) {
+        const flower = new HiddenFlower();
+        flower.object.position.copy(pos);
+        flower.setOpen(state.story.flowerOpen);
+        dyn.add(flower.object);
+        props.flower = { flower, pos };
+        addSpot({ kind: 'flower', id: 'flower', name: '숨은 꽃', pos, radius: 2.6, lift: 1.7 });
+      }
+    }
+    if (info.iceTraces) {
+      const pts = info.iceTraces.offsets.map((o) => markerGround(info.iceTraces.at, o));
+      pts.forEach((pos, i) => {
+        if (!pos) return;
+        const g = new IceGlyph(i);
+        g.object.position.copy(pos);
+        dyn.add(g.object);
+        if (pts[i + 1]) dyn.add(g.linkTo(pos, pts[i + 1]));
+        props.glyphs.push({ g, pos, i });
+        addSpot({ kind: 'iceTrace', id: `trace${i}`, name: '결정 속 흔적', pos, radius: 2.4, lift: 2.2, index: i });
+      });
+    }
+    if (info.jelly && world.grid) {
+      const from = markerGround(info.jelly.from, [0, 0], true);
+      const to = markerGround(info.jelly.to, [0, 0], true);
+      const route = from && to ? findPath(world.grid, from, to, 400000) : null;
+      if (route && route.length > 1) {
+        const start = routePoint(route, 0.06);
+        const stops = info.jelly.stops.map((k) => snapToGrid(routePoint(route, k), 3, true));
+        const jelly = new LittleJelly();
+        const step = state.story.guideStep;
+        jelly.placeAt(step > 0 ? stops[step - 1] : start);
+        dyn.add(jelly.object);
+        props.jelly = { jelly, start, stops };
+        addSpot({ kind: 'jelly', id: 'jelly', name: '작은 해파리', pos: start, radius: 4, lift: 2.6, live: () => jelly.object.position.clone().setY(jelly.baseY) });
+        stops.forEach((pos, i) => {
+          const ring = new GroundRing({ color: '#FFE4D2', radius: 0.75 });
+          ring.mesh.position.copy(pos).add(V3(0, 0.05, 0));
+          const path = new GlowPath(i === 0 ? start : stops[i - 1], pos, '#FFE4D2');
+          dyn.add(ring.mesh, path.object);
+          props.guidePts.push({ pos, ring, path, i });
+          addSpot({ kind: 'guidePt', id: `guide${i}`, name: '빛길 지점', pos, radius: 2.4, lift: 1.3, index: i });
+        });
+      }
+    }
+    // 답장을 받은 뒤: 작은 해파리가 전망대 곁 하늘에 머문다
+    if (info.jellyStay && state.story.guideStep >= 3) {
+      const jelly = new LittleJelly();
+      jelly.placeAt(V3(...info.jellyStay));
+      jelly.object.scale.setScalar(1.6);
+      dyn.add(jelly.object);
+      props.jelly = { jelly, start: V3(...info.jellyStay), stops: [], stay: true };
+    }
   }
 
   async function enterScene({ label } = {}) {
@@ -956,6 +1250,7 @@ async function boot() {
     commitPosition();
     fader.hide();
     refresh();
+    setTimeout(maybeStartTrace, 1500);
     return true;
   }
 
@@ -1030,6 +1325,41 @@ async function boot() {
       if (spot) spot.disabled = found;
     }
     for (const { door, ex } of props.doors) door.locked = !!ex.lockedUntil?.(state);
+    syncStoryProps();
+  }
+
+  function syncStoryProps() {
+    const T = state.story;
+    const Q = state.quests;
+    const spot = (kind, id) => spots.find((s) => s.kind === kind && s.id === id);
+    if (props.flower) {
+      if (T.flowerOpen) props.flower.flower.setOpen(true);
+      const s = spot('flower', 'flower');
+      if (s) s.disabled = !(Q.flower === 'active');
+    }
+    for (const { g, i } of props.glyphs) {
+      g.setRevealed(T.iceTraces.includes(i));
+      const s = spot('iceTrace', `trace${i}`);
+      // 다음에 비출 흔적 하나만, 셋이 이어진 뒤에는 마지막 흔적에서 방향을 읽는다
+      const readable = i === 2 && T.iceTraces.length >= 3 && !T.clues.includes('ice');
+      if (s) s.disabled = Q.icepath !== 'active' || !(i === T.iceTraces.length || readable);
+    }
+    if (props.jelly && !props.jelly.stay) {
+      const s = spot('jelly', 'jelly');
+      if (s) s.disabled = T.jellyMet || Q.guide !== 'active';
+      props.jelly.jelly.object.visible = Q.guide === 'active' || T.guideStep >= 3;
+      for (const gp of props.guidePts) {
+        const active = Q.guide === 'active' && T.jellyMet && gp.i === T.guideStep;
+        gp.ring.mesh.visible = (Q.guide === 'active' && T.jellyMet) || gp.i < T.guideStep;
+        gp.ring.strength = active ? 1 : 0.25;
+        gp.ring.setColor(active ? '#FFD0A9' : '#C9B7EE');
+        if (gp.i < T.guideStep && gp.path.target === 0) gp.path.light(true, false);
+        const gs = spot('guidePt', `guide${gp.i}`);
+        if (gs) gs.disabled = !active;
+      }
+    }
+    props.branches?.set(T.clues.length, T.cluesWoven);
+    if (props.replies && T.replySent && props.replies.t < 0) props.replies.settle();
   }
 
   // ------------------------------------------------------------------ 안내
@@ -1068,6 +1398,10 @@ async function boot() {
       if (!W.route) return '항해 나무에서 **항로**를 골라요';
       return '항해 나무에서 **출항**해요';
     }
+    if (W.chapterDone && S.story.traceSeen) {
+      const h = storyHint();
+      if (h !== undefined) return h;
+    }
     if (W.chapterDone && isDestination(sc)) {
       const d = (SCENE_INFO[sc].discoveries ?? []).find((x) => !isDiscovered(S, x.id));
       return d ? `반짝이는 **${d.label}**의 빛을 찾아봐요` : '선착장에서 **해파리로 돌아가요**';
@@ -1075,11 +1409,67 @@ async function boot() {
     return null;
   }
 
+  /** 두 번째 이야기 안내: 지금 해야 할 행동 + 이유 한 줄 */
+  function storyHint() {
+    const S = state;
+    const T = S.story;
+    const Q = S.quests;
+    const sc = S.scene;
+    const p = view.panel;
+    if (p?.kind === 'craft' && p.back) return '**밝기·색·형태**를 고르고 **다시 빚기**(또는 빛 빚기) 뒤 창을 닫아 다시 비춰요';
+    if (p?.kind === 'use') {
+      if (p.target === 'flower') return T.flowerOpen ? '열린 꽃 안의 **낯선 빛**을 살펴요' : '빛을 비춰 **꽃의 반응**을 봐요 · 밝으면 움츠리고 은은하면 열려요';
+      if (p.target === 'iceTrace') return '**차가운 빛**을 비추면 결정 속 문양이 드러나요';
+      if (p.target === 'guidePt') return `작은 해파리가 따라오도록 **밝기 ${GUIDE_SOFT} 이하** 빛으로 빛길을 놓아요`;
+    }
+    if (Q.trace !== 'claimed') {
+      if (sc === 'solar' && !T.clues.includes('solar')) {
+        if (Q.flower === 'available') return '선착장의 **살구**와 이야기해요 · 숲 끝 꽃이 이상하대요';
+        if (Q.flower === 'active') return T.flowerOpen ? '열린 꽃에 다가가 **E**로 흔적을 살펴요' : '태양씨앗 숲 끝 **숨은 꽃**에 다가가 **E**로 빛을 비춰요';
+      }
+      if (sc === 'ice' && !T.clues.includes('ice')) {
+        if (Q.icepath === 'available') return '선착장의 **리본**과 이야기해요 · 결정 안에 뭔가 있대요';
+        if (Q.icepath === 'active') {
+          if (!isDiscovered(S, 'iceAurora')) return '**오로라 결정**에서 이곳의 차가운 빛을 먼저 얻어요';
+          return T.iceTraces.length >= 3 ? '마지막 흔적 앞에서 **E**로 방향을 읽어요' : `빛나는 **결정 속 흔적**에 차가운 빛을 비춰요 (${T.iceTraces.length} / 3)`;
+        }
+      }
+      if (Q.flower === 'completed') return '**살구**에게 발견한 흔적을 알려요';
+      if (Q.icepath === 'completed') return '**리본**에게 발견한 흔적을 알려요';
+      if (T.clues.length >= 1 && T.shown < 1) return sc === 'overlook' ? '**보라**에게 발견한 빛을 보여 줘요' : '항해 전망대의 **보라**에게 발견한 빛을 보여 줘요';
+      if (T.clues.length >= 2) return sc === 'overlook' ? '**항해 나무**에서 **E**로 두 흔적을 엮어요' : '항해 전망대의 **항해 나무**에서 두 흔적을 엮어요';
+      const other = T.clues.includes('solar') ? '얼음 성운' : T.clues.includes('ice') ? '태양 정원' : '태양 정원이나 얼음 성운';
+      return isDestination(sc) ? `선착장에서 해파리로 돌아가 **${other}**으로 항해해요` : `항해 전망대의 **항해 나무**에서 **${other}** 항로를 골라요`;
+    }
+    if (Q.guide === 'active') {
+      if (sc !== 'twilight') return '**항해 나무**에서 **황혼 합류지**로 항해해요';
+      if (!T.jellyMet) return '희미한 빛 사이의 **작은 해파리**에게 다가가 살펴요';
+      return `빛나는 **빛길 지점**에 은은한 빛을 놓아 작은 해파리를 불러요 (${T.guideStep} / 3)`;
+    }
+    if (Q.reply === 'available') return '항해 전망대의 **보라**와 이야기해요 · 작은 해파리가 품은 빛의 비밀';
+    if (Q.reply === 'active') {
+      if (T.replySent) return '**보라**에게 답장이 닿았는지 들어요';
+      const here = { replyRest: 'neighborhood', replyPath: 'walkway', replySignal: 'overlook' };
+      const missing = REPLY_SPOTS.filter((r) => !r.check(lightAt(S, r.slot)));
+      const miss = missing.find((r) => here[r.slot] === sc) ?? missing[0];
+      if (miss) return `**${miss.label}**을 놓아요 (${miss.need}) · 색과 모양은 자유예요`;
+      return sc === 'overlook' ? '**항해 나무**에서 **E**로 답장을 보내요' : '항해 전망대의 **항해 나무**에서 답장을 보내요';
+    }
+    if (Q.reply === 'completed') return '**보라**에게 답장이 닿았는지 들어요';
+    if (Q.reply === 'claimed') return null;
+    return undefined;
+  }
+
   /** 안내 빛이 날아갈 현재 목표 지점 */
   function hintTarget() {
     const S = state;
     const W = S.world;
     const find = (kind, id) => spots.find((s) => s.kind === kind && (id === undefined || s.id === id) && !s.disabled);
+    // 두 번째 이야기는 길 안내 목표를 그대로 쓴다
+    if (W.chapterDone && S.story.traceSeen) {
+      const g = guideTarget(S);
+      return g ? find(g.kind, g.id) ?? null : null;
+    }
     if (S.quests.q01 === 'active') return S.scene === 'workshop' ? find('workbench') : find('exit', 'ENTRY_정원_교환광장');
     if (S.quests.q02 === 'available') return find('npc', 'salgu') ?? find('exit', S.scene === 'workshop' ? 'ENTRY_정원_교환광장' : 'EXIT_촉수산책로');
     if (S.quests.q02 === 'active') return S.scene === 'walkway' ? (S.slots.lantern ? find('tune') : find('slot', 'lantern')) : find('exit', 'EXIT_촉수산책로') ?? find('exit', 'ENTRY_정원_교환광장');
@@ -1113,7 +1503,12 @@ async function boot() {
       }
     }
     // 목표 대상 패널을 열고 있으면 안내는 잠시 숨긴다
-    const busy = view.panel && ((view.panel.kind === 'craft' && target?.kind === 'workbench') || view.panel.kind === 'tune' || (view.panel.kind === 'slot' && target?.id === view.panel.id));
+    const busy =
+      view.panel &&
+      ((view.panel.kind === 'craft' && (target?.kind === 'workbench' || !!view.panel.back)) ||
+        view.panel.kind === 'tune' ||
+        view.panel.kind === 'use' ||
+        (view.panel.kind === 'slot' && target?.id === view.panel.id));
     if (!spot || busy) return hideGuide();
     const pos = spot.live ? spot.live() : spot.pos;
     const p = actors.player.position;
@@ -1182,7 +1577,14 @@ async function boot() {
     if (best.kind === 'glimmer') verb = '반짝임 살피기';
     if (best.kind === 'bud') verb = '봉오리 깨우기';
     if (best.kind === 'puzzle') verb = '귀 기울이기';
-    if (best.kind === 'organ') {
+    const T = state.story;
+    if (best.kind === 'flower') verb = T.flowerOpen && !T.clues.includes('solar') ? '꽃 속 흔적 살피기' : '빛 비추기';
+    if (best.kind === 'iceTrace') verb = T.iceTraces.length >= 3 ? '흔적의 방향 읽기' : '빛 비추기';
+    if (best.kind === 'guidePt') verb = '빛길 놓기';
+    if (best.kind === 'jelly') verb = '가만히 살펴보기';
+    if (best.kind === 'organ' && W.chapterDone && T.clues.length >= 2 && !T.cluesWoven) verb = '두 흔적 엮기';
+    else if (best.kind === 'organ' && state.quests.reply === 'active' && !T.replySent) verb = replyReady(state) ? '답장 보내기' : '답장 준비 살피기';
+    else if (best.kind === 'organ') {
       const Q = state.quests.q04;
       if (Q === 'active' && !W.organFed) verb = '엮은 빛 보내기';
       else if (W.organFed && (!W.route || W.chapterDone)) verb = '항로 고르기';
@@ -1235,7 +1637,7 @@ async function boot() {
         view.lastProgress = performance.now();
         syncProps();
         refresh();
-        if (view.glimmersFound.size === props.glimmers.length) toast.show('세 반짝임이 봉오리와 같은 박자로 숨 쉬어요. 이제 봉오리를 깨워요.');
+        if (view.glimmersFound.size === props.glimmers.length) toast.show('세 반짝임을 모두 찾았어요. 봉오리가 빛에 반응해요. 이제 봉오리를 깨워요.');
         break;
       case 'bud':
         if (dispatch({ type: 'wakeBud' })) {
@@ -1249,6 +1651,20 @@ async function boot() {
         break;
       case 'organ':
         useOrgan();
+        break;
+      case 'flower':
+        if (state.story.flowerOpen && !state.story.clues.includes('solar')) dispatch({ type: 'readFlowerClue' });
+        else openUse(t);
+        break;
+      case 'iceTrace':
+        if (state.story.iceTraces.length >= 3 && !state.story.clues.includes('ice')) dispatch({ type: 'readIceClue' });
+        else openUse(t);
+        break;
+      case 'guidePt':
+        openUse(t);
+        break;
+      case 'jelly':
+        meetJelly();
         break;
       case 'discovery':
         if (dispatch({ type: 'discover', id: t.id })) {
@@ -1317,6 +1733,36 @@ async function boot() {
         const exitSpot = spots.find((s) => s.kind === 'exit' && s.id === 'EXIT_촉수산책로');
         if (exitSpot && settings.hints) wisp.fly(actors.player.position, exitSpot.pos);
       });
+      return;
+    }
+    // 두 번째 이야기: 함께 가 보기 / 혼자 해 보기 — 선택에 따라 주민이 실제로 움직인다
+    if (verb === 'flower' || verb === 'icepath') {
+      if (!dispatch({ type: 'acceptQuest', id: verb })) return;
+      const target = verb === 'flower' ? spots.find((s) => s.kind === 'flower') : spots.find((s) => s.kind === 'iceTrace' && s.index === 0);
+      say(npc, BRANCH_LINES[act], () => {
+        if (!target) return;
+        if (arg === 'together') npcWalk(npc, snapToGrid(target.pos.clone().add(V3(1.4, 0, 1.2))), () => npc.char.faceTowards(target.pos.x, target.pos.z));
+        if (settings.hints) wisp.fly(actors.player.position, target.pos);
+      });
+      return;
+    }
+    if (verb === 'showClues') {
+      if (dispatch({ type: 'showClues' })) {
+        const two = state.story.clues.length >= 2;
+        say(npc, two ? '두 흔적이 서로 이어져요…! 항해 나무에서 함께 엮어 봐요. 방향이 보일 거예요.' : '여기까진 보이는데, 그다음이 흐리네요. 다른 곳에 남은 빛도 찾아오면 이어 볼 수 있겠어요.', () => {
+          if (!two) return;
+          const organ = spots.find((s) => s.kind === 'organ');
+          if (organ && settings.hints) wisp.fly(actors.player.position, organ.pos);
+        });
+      }
+      return;
+    }
+    if (verb === 'goto') {
+      const organ = spots.find((s) => s.kind === 'organ');
+      if (organ) {
+        if (settings.hints) wisp.fly(actors.player.position, organ.pos);
+        toast.show('항해 나무 앞에서 E를 눌러요.');
+      } else toast.show('항해 전망대의 항해 나무로 가요.');
       return;
     }
     if (verb === 'accept') {
@@ -1496,6 +1942,13 @@ async function boot() {
   // ------------------------------------------------------------------ 항해 나무·항로·항해
   function useOrgan() {
     const W = state.world;
+    const T = state.story;
+    if (W.chapterDone && T.clues.length >= 2 && !T.cluesWoven) return playWeaveClues();
+    if (state.quests.reply === 'active' && !T.replySent) {
+      if (replyReady(state)) return playReply();
+      const miss = REPLY_SPOTS.filter((r) => !r.check(lightAt(state, r.slot)));
+      return toast.show(`답장 자리가 아직 비었어요: ${miss.map((r) => `${r.label}(${r.need})`).join(', ')}`, 5000);
+    }
     if (state.quests.q04 === 'active' && !W.organFed) {
       if (!dispatch({ type: 'feedOrgan' })) return;
       props.flows.forEach((f) => f.start(settings.reducedMotion ? 1.5 : 4.5));
@@ -1517,8 +1970,172 @@ async function boot() {
   function openRoutes() {
     if (!state.world.organFed) return;
     view.mode = 'panel-modal';
-    routes.show(state.world.route);
+    routes.show(state.world.route, availableRoutes(state));
     refresh();
+  }
+
+  // ------------------------------------------------------------------ 두 번째 이야기 연출
+  /** 짧은 대사 여러 줄(한 화면에 한두 문장) */
+  function sayLines(npc, texts, then) {
+    view.mode = 'dialogue';
+    dialogue.play({ steps: texts.map((text) => ({ speaker: npc.name, portrait: portraitFor(npc.id), text })), onClose: then });
+    refresh();
+  }
+
+  /** 첫 항해 뒤 낯선 빛: 짧은 시선 유도 → 동행 주민의 반응 → 목표 자동 등록 */
+  function maybeStartTrace() {
+    const S = state;
+    if (!S.world.chapterDone || S.story.traceSeen || view.traceRunning || view.mode !== 'play' || !props.strange) return;
+    const info = SCENE_INFO[S.scene];
+    if (!info.trace) return;
+    const from = markerGround(info.trace.at, info.trace.offset, true);
+    if (!from) return;
+    const inward = spots.find((s) => s.kind === 'flower') ?? spots.find((s) => s.kind === 'iceTrace') ?? spots.find((s) => s.kind === 'organ');
+    const to = inward ? inward.pos.clone().lerp(from, 0.35) : snapToGrid(sceneCenter());
+    view.traceRunning = true;
+    props.strange.play(from, to, settings.reducedMotion ? 3 : 6.5);
+    follow.autoYaw = Math.atan2(actors.player.position.x - from.x, actors.player.position.z - from.z);
+    chime(1174.66, 0.9, 0.06);
+    const companion = actors.npcs.find((n) => ['ribbonIce', 'salguSolar', 'bora'].includes(n.id));
+    const finish = () => {
+      view.traceRunning = false;
+      dispatch({ type: 'seeTrace' });
+    };
+    setTimeout(() => {
+      if (view.mode !== 'play') return finish();
+      if (companion) {
+        companion.char.greet();
+        const lines =
+          companion.id === 'bora'
+            ? ['방금 그 빛… 우리 해파리에서 나온 게 아니에요.', '누군가 먼 곳에서 흔적을 남긴 것 같아요. 따뜻한 곳과 차가운 곳 쪽으로요.']
+            : ['저 빛, 우리 해파리에서 나온 게 아니야.', '누가 여길 지나갔나 봐. 가까이 가 볼까?'];
+        sayLines(companion, lines, finish);
+      } else {
+        toast.show('우리 해파리의 빛이 아닌, 낯선 작은 빛이 스쳐 갔어요.', 4000);
+        finish();
+      }
+    }, settings.reducedMotion ? 600 : 1800);
+  }
+
+  /** 두 흔적 엮기: 따뜻한 흔적과 차가운 흔적이 항해 나무에서 만나 새 방향이 드러난다 */
+  function playWeaveClues() {
+    if (view.mode !== 'play') return;
+    view.mode = 'cinematic';
+    closePanel(true);
+    refresh();
+    const dur = settings.reducedMotion ? 1.5 : 4.5;
+    props.flows.forEach((f) => f.start(dur));
+    chime(659.25, 1, 0.1);
+    setTimeout(() => chime(880, 1.2, 0.1), 700);
+    let t = 0;
+    const tree = props.tree;
+    if (tree) {
+      actors.player.faceTowards(tree.x, tree.z);
+      follow.autoYaw = Math.atan2(actors.player.position.x - tree.x, actors.player.position.z - tree.z);
+      follow.pitch = 0.12;
+    }
+    cinematic = {
+      followCam: true,
+      update(dt) {
+        t += dt;
+        props.branches?.set(2, t > dur * 0.6);
+        if (t >= dur) this.finish();
+      },
+      finish() {
+        cinematic = null;
+        view.mode = 'play';
+        dispatch({ type: 'weaveClues' });
+        if (tree) sparkles.burst(tree.clone().add(V3(0, 4.5, 0)), 40, settings.reducedMotion);
+        banner.show('두 흔적이 이어졌어요', '새로운 방향: 황혼 합류지', '햇살 꽃과 얼음 결정의 흔적이 한 줄기 항로가 되었어요.', 5500);
+        const bora = actors.npcs.find((n) => n.id === 'bora');
+        if (bora) setTimeout(() => view.mode === 'play' && sayLines(bora, ['두 빛이 같은 곳을 가리켜요. 노을빛 계단섬, 황혼 합류지예요.', '작은 누군가가 거기서 길을 잃은 것 같아요. 항로를 열어 둘게요.']), 1400);
+      },
+      skip() {
+        this.finish();
+      },
+    };
+  }
+
+  /** 마을의 답장: 실제로 놓은 세 빛이 차례로 떠올라 멀리 보내지고, 먼 작은 빛들이 응답한다 */
+  function playReply() {
+    if (view.mode !== 'play') return;
+    const organ = spots.find((s) => s.kind === 'organ');
+    if (!organ) return dispatch({ type: 'sendReply' });
+    view.mode = 'cinematic';
+    closePanel(true);
+    refresh();
+    const lights = REPLY_SPOTS.map((r) => lightAt(state, r.slot)).filter(Boolean);
+    const tree = props.tree ?? organ.pos;
+    const base = organ.pos.clone().lerp(tree, 0.5).add(V3(0, 1.4, 0));
+    const out = V3(tree.x - actors.player.position.x, 0, tree.z - actors.player.position.z);
+    if (out.lengthSq() < 0.01) out.set(0, 0, -1);
+    out.normalize();
+    const side = V3(-out.z, 0, out.x);
+    const orbs = lights.map((l, i) => {
+      const prop = new LightProp({ ...l, brightness: Math.max(70, l.brightness) }, { preview: true });
+      prop.object.position.copy(base).add(V3((i - 1) * 1.2, 0, 0));
+      prop.object.visible = false;
+      world.dynamic.add(prop.object);
+      return prop;
+    });
+    const dur = settings.reducedMotion ? 2.5 : 7;
+    let t = 0;
+    const sent = new Set();
+    actors.player.faceTowards(tree.x, tree.z);
+    follow.pitch = 0.08;
+    follow.autoYaw = Math.atan2(actors.player.position.x - tree.x, actors.player.position.z - tree.z);
+    // 설치한 답장 자리 빛도 차례로 반짝인다(전망대 자리)
+    const signal = props.slots.get('replySignal')?.prop;
+    cinematic = {
+      followCam: true,
+      update(dt) {
+        t += dt;
+        orbs.forEach((o, i) => {
+          const start = 0.4 + i * (dur * 0.16);
+          const k = THREE.MathUtils.clamp((t - start) / (dur * 0.45), 0, 1);
+          o.object.visible = k > 0 && k < 1;
+          if (k > 0 && !sent.has(i)) {
+            sent.add(i);
+            chime(587.33 + i * 130, 0.8, 0.09);
+            sparkles.burst(o.object.position.clone().add(V3(0, 1, 0)), 14, settings.reducedMotion);
+          }
+          o.object.position.copy(base).addScaledVector(side, (i - 1) * 1.2 * (1 - k)).addScaledVector(out, k * 34).add(V3(0, k * k * 22, 0));
+          o.object.scale.setScalar(1 - k * 0.6);
+          o.update(time);
+        });
+        if (signal) signal.object.scale.setScalar(1 + Math.max(0, Math.sin(t * 5)) * 0.25);
+        if (t > dur * 0.62 && props.replies && props.replies.t < 0) {
+          props.replies.play();
+          chime(1046.5, 1.4, 0.08);
+        }
+        if (t >= dur) this.finish();
+      },
+      finish() {
+        cinematic = null;
+        orbs.forEach((o) => o.dispose());
+        if (signal) signal.object.scale.setScalar(1);
+        view.mode = 'play';
+        dispatch({ type: 'sendReply' });
+        props.replies?.settle();
+        banner.show('우리 마을의 답장', '멀리서 작은 빛들이 대답해요', '쉼터·산책길·전망대에 놓은 빛이 함께 떠났어요.', 6000);
+        const bora = actors.npcs.find((n) => n.id === 'bora');
+        if (bora) setTimeout(() => view.mode === 'play' && talkTo('bora'), 2200);
+      },
+      skip() {
+        this.finish();
+      },
+    };
+  }
+
+  /** 작은 해파리를 처음 만났을 때 */
+  function meetJelly() {
+    const pj = props.jelly;
+    if (!pj || state.quests.guide !== 'active') return;
+    if (!dispatch({ type: 'meetJelly' })) return;
+    pj.jelly.flinch();
+    bubble.show('작은 해파리가 강한 빛을 피해 몸을 움츠려요. 은은한 빛길을 따라오게 해 볼까요?', () => project(pj.jelly.object.position, 0.6));
+    const first = spots.find((s) => s.kind === 'guidePt' && s.index === 0);
+    if (first && settings.hints) setTimeout(() => wisp.fly(actors.player.position, first.pos), 1200);
   }
 
   function requestDepart() {
@@ -1547,7 +2164,7 @@ async function boot() {
     }
     // 2) 외부 연출: 수축하며 출발 → 별 흐름과 성운이 목적지 색으로 → 도착 준비
     voyageSkipRequested = false;
-    const names = { solar: '태양 정원', ice: '얼음 성운', overlook: '항해 전망대' };
+    const names = { solar: '태양 정원', ice: '얼음 성운', twilight: '황혼 합류지', overlook: '항해 전망대' };
     const lines = first
       ? [
           { at: 0, text: '해파리가 한 번 크게 숨을 쉬어요' },
@@ -1614,8 +2231,11 @@ async function boot() {
       if (isDestination(state.scene)) {
         dispatch({ type: 'arrivalControl' });
         const d = spots.find((s) => s.kind === 'discovery' && !s.disabled);
-        if (d) setTimeout(() => wisp.fly(actors.player.position, d.pos), 900);
+        const jelly = state.quests.guide === 'active' && !state.story.jellyMet ? spots.find((s) => s.kind === 'jelly') : null;
+        const goal = jelly ?? d;
+        if (goal) setTimeout(() => wisp.fly(actors.player.position, goal.live?.() ?? goal.pos), 900);
       }
+      setTimeout(maybeStartTrace, 1200);
     };
     if (isDestination(state.scene) && companion && !state.world.arrived) {
       setTimeout(() => {
@@ -1780,6 +2400,13 @@ async function boot() {
     }
     if (view.panel?.kind === 'tune') {
       view.tuning = null;
+    }
+    // 대상 앞에서 연 작업대를 닫으면 그 대상의 빛 비추기로 돌아간다
+    if (!silent && view.panel?.kind === 'craft' && view.panel.back) {
+      view.panel = view.panel.back;
+      syncProps();
+      refresh();
+      return;
     }
     view.panel = null;
     if (!silent) {
@@ -2212,7 +2839,7 @@ async function boot() {
       updateNpcs(dt);
       const focus = actors.player?.object.parent ? actors.player.position : camera.position;
       if (view.mode !== 'cinematic' || actors.player?.object.parent) {
-        if (actors.player?.object.parent && !(view.mode === 'cinematic' && !state.world.openingSeen)) {
+        if (actors.player?.object.parent && !(view.mode === 'cinematic' && !state.world.openingSeen && !cinematic?.followCam)) {
           follow.target.copy(actors.player.position);
           follow.update(dt);
         }
@@ -2243,6 +2870,20 @@ async function boot() {
         props.beacon.update(dt, time, { ready: state.quests.q04 === 'active' || state.world.chapterDone, near, cameraPos: camera.position });
       }
       props.glimmers.forEach((g) => g.g.update(time));
+      // 두 번째 이야기 공간 반응
+      props.strange?.update(dt, time);
+      props.flower?.flower.update(dt, time);
+      for (const { g, i } of props.glyphs) {
+        const s = spots.find((x) => x.kind === 'iceTrace' && x.index === i);
+        g.update(dt, time, !!s && !s.disabled, camera.position);
+      }
+      props.jelly?.jelly.update(dt, time);
+      for (const gp of props.guidePts) {
+        gp.ring.update(time);
+        gp.path.update(dt, time);
+      }
+      props.branches?.update(dt, time);
+      props.replies?.update(dt, time);
       props.flows.forEach((f) => f.update(dt));
       props.crystals.forEach((c) => c.update(dt, time));
       for (const d of props.discoveries.values()) {
@@ -2260,14 +2901,29 @@ async function boot() {
         const t = nearestTarget();
         view.target = t;
         const panelOnTarget =
-          view.panel && t && ((view.panel.kind === 'slot' && t.kind === 'slot' && t.id === view.panel.id) || (view.panel.kind === 'craft' && t.kind === 'workbench') || (view.panel.kind === 'puzzle' && t.kind === 'puzzle') || (view.panel.kind === 'tune' && (t.kind === 'tune' || t.kind === 'slot')));
+          view.panel &&
+          t &&
+          ((view.panel.kind === 'slot' && t.kind === 'slot' && t.id === view.panel.id) ||
+            (view.panel.kind === 'craft' && (t.kind === 'workbench' || !!view.panel.back)) ||
+            (view.panel.kind === 'use' && t.kind === view.panel.target) ||
+            (view.panel.kind === 'puzzle' && t.kind === 'puzzle') ||
+            (view.panel.kind === 'tune' && (t.kind === 'tune' || t.kind === 'slot')));
         prompt.update(panelOnTarget ? null : t);
         if (view.panel) {
-          const kind = { slot: 'slot', craft: 'workbench', puzzle: 'puzzle', tune: 'tune' }[view.panel.kind];
-          const anchor = spots.find((s) => s.kind === kind && (kind !== 'slot' || s.id === view.panel.id));
-          if (!anchor || anchor.pos.distanceTo(actors.player.position) > PANEL_CLOSE_RADIUS + (kind === 'tune' ? 2 : 0)) {
+          let anchor;
+          if (view.panel.kind === 'use') anchor = useSpot(view.panel);
+          else if (view.panel.kind === 'craft' && view.panel.back) anchor = useSpot(view.panel.back);
+          else {
+            const kind = { slot: 'slot', craft: 'workbench', puzzle: 'puzzle', tune: 'tune' }[view.panel.kind];
+            anchor = spots.find((s) => s.kind === kind && (kind !== 'slot' || s.id === view.panel.id));
+          }
+          if (!anchor || anchor.pos.distanceTo(actors.player.position) > PANEL_CLOSE_RADIUS + (view.panel.kind === 'tune' ? 2 : 0)) {
             if (view.panel.kind === 'tune') actions.tuneCancel();
-            else closePanel();
+            else {
+              closePanel(true);
+              syncProps();
+              refresh();
+            }
           }
         }
         if (view.panel) updatePanels();

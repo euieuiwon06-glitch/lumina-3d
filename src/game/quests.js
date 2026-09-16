@@ -1,6 +1,6 @@
 // 첫 챕터 "첫 번째 숨결" 퀘스트 정의와 조건 판정.
 // 완료는 버튼이 아니라 실제 게임 상태로만 결정된다. (추가)LUMINA_초반플레이_통합기획 6·7장
-import { SOFT_BRIGHTNESS } from './catalog.js';
+import { REPLY_SPOTS, SOFT_BRIGHTNESS } from './catalog.js';
 
 export const STATUS = ['locked', 'available', 'active', 'completed', 'claimed'];
 const rank = (s) => STATUS.indexOf(s);
@@ -25,6 +25,8 @@ export function carriedLights(state) {
 
 const isPulse = (l) => l && (l.motion === 'pulse' || l.motion === 'slowpulse');
 const w = (s) => s.world;
+const st = (s) => s.story;
+const hasClue = (s, id) => st(s).clues.includes(id);
 
 export const QUESTS = {
   q01: {
@@ -125,13 +127,103 @@ export const QUESTS = {
       { kind: 'material', id: 'shard', amount: 1 },
     ],
   },
+  // ---------------------------------------------------------------- 두 번째 이야기: 빛으로 발견하고, 돕고, 연결하기
+  trace: {
+    title: '누군가 남긴 빛',
+    goal: '다른 해파리가 남긴 빛 따라가기',
+    main: true,
+    giver: null,
+    auto: true,
+    unlock: (s) => w(s).chapterDone && st(s).traceSeen,
+    tasks: [
+      { id: 'clue1', label: '태양 정원이나 얼음 성운에서 흔적 찾기', check: (s) => st(s).clues.length >= 1 },
+      { id: 'show', label: '보라에게 발견한 빛 보여 주기', check: (s) => st(s).shown >= 1 },
+      { id: 'clue2', label: '다른 곳에 남은 두 번째 흔적 찾기', check: (s) => st(s).clues.length >= 2 },
+      { id: 'weave', label: '항해 나무에서 두 흔적 엮기', check: (s) => st(s).cluesWoven },
+    ],
+    rewards: [
+      { kind: 'unlock', id: 'twilightRoute' },
+      { kind: 'material', id: 'seed', amount: 1 },
+    ],
+  },
+  flower: {
+    title: '눈부셔서 숨은 꽃',
+    goal: '꽃이 편안하게 열리게 하기',
+    main: true,
+    giver: 'salguSolar',
+    unlock: (s) => w(s).chapterDone && st(s).traceSeen,
+    lines: ['여긴 이렇게 밝은데, 저 숲 끝 꽃만 안 피네.', '빛이 모자란 건 아닌 것 같아. 가까이서 볼까?'],
+    doneLines: ['꽃이 편안해 보여. 안에 있던 빛, 우리 해파리 빛이 아니었지?', '이건 꽃이 준 햇살 조각이야. 노을빛을 빚을 수 있을 거야.'],
+    tasks: [
+      { id: 'try', label: '꽃에 빛을 비춰 반응 살피기', check: (s) => st(s).flowerTries >= 1 },
+      { id: 'open', label: '꽃이 편안하게 열리도록 빛을 낮추기', check: (s) => st(s).flowerOpen },
+      { id: 'clue', label: '꽃 속 빛의 흔적 살피기', check: (s) => hasClue(s, 'solar') },
+    ],
+    onAccept: [
+      { kind: 'unlock', id: 'brightness' },
+      { kind: 'material', id: 'seed', amount: 1 },
+    ],
+    rewards: [
+      { kind: 'unlock', id: 'sunset' },
+      { kind: 'material', id: 'seed', amount: 1 },
+    ],
+  },
+  icepath: {
+    title: '얼음 속에 남은 길',
+    goal: '지역의 빛으로 결정 속 흔적 찾기',
+    main: true,
+    giver: 'ribbonIce',
+    unlock: (s) => w(s).chapterDone && st(s).traceSeen,
+    lines: ['결정 안에 뭔가 있어.', '여기서 찾은 차가운 빛을 비추면 더 잘 보일 것 같은데.'],
+    doneLines: ['흔적이 한 줄로 이어졌어. 작은 누군가가 이쪽으로 헤엄쳐 갔나 봐.', '빛이 지나간 자리를 남기는 법을 기억해 가.'],
+    tasks: [
+      { id: 'aurora', label: '오로라 결정에서 지역의 빛 얻기', check: (s) => s.discovered.includes('iceAurora') },
+      { id: 'traces', label: '차가운 빛으로 결정 흔적 세 곳 비추기', check: (s) => st(s).iceTraces.length >= 3 },
+      { id: 'clue', label: '이어진 흔적의 방향 읽기', check: (s) => hasClue(s, 'ice') },
+    ],
+    onAccept: [{ kind: 'material', id: 'seed', amount: 1 }],
+    rewards: [
+      { kind: 'unlock', id: 'afterglow' },
+      { kind: 'material', id: 'shard', amount: 1 },
+    ],
+  },
+  guide: {
+    title: '이쪽으로 와도 괜찮아',
+    goal: '작은 해파리를 선착장까지 안내하기',
+    main: true,
+    giver: null,
+    auto: true,
+    unlock: (s) => st(s).cluesWoven,
+    tasks: [
+      { id: 'find', label: '황혼 합류지에서 작은 해파리 찾기', check: (s) => st(s).jellyMet },
+      { id: 'path', label: '은은한 빛으로 빛길 잇기', check: (s) => st(s).guideStep >= 2 },
+      { id: 'home', label: '선착장까지 데려오기', check: (s) => st(s).guideStep >= 3 },
+    ],
+    rewards: [{ kind: 'material', id: 'seed', amount: 2 }],
+  },
+  reply: {
+    title: '우리 마을의 답장',
+    goal: '우리 마을의 빛으로 답장 보내기',
+    main: true,
+    giver: 'bora',
+    unlock: (s) => atLeast(s, 'guide', 'claimed'),
+    lines: ['작은 해파리가 품고 있던 빛은 친구들에게 보내려던 편지였어요.', '우리 마을의 빛을 더해 답장을 보내요. 세 곳에 빛을 놓아 주세요.'],
+    doneLines: ['멀리서 작은 빛들이 대답했어요.', '이제 우리 해파리도, 작은 손님도 길을 잃지 않을 거예요.'],
+    tasks: [
+      ...REPLY_SPOTS.map((r) => ({ id: r.slot, label: `${r.label} 놓기 · ${r.need}`, check: (s) => r.check(lightAt(s, r.slot)) })),
+      { id: 'send', label: '항해 나무에서 답장 보내기', check: (s) => st(s).replySent },
+    ],
+    onAccept: [{ kind: 'material', id: 'seed', amount: 2 }],
+    rewards: [{ kind: 'material', id: 'seed', amount: 3 }],
+  },
 };
 
-export const QUEST_ORDER = ['q01', 'q02', 'q03', 'q04', 'shelter', 'song'];
+export const QUEST_ORDER = ['q01', 'q02', 'q03', 'q04', 'shelter', 'song', 'trace', 'flower', 'icepath', 'guide', 'reply'];
 export const MAIN_ORDER = ['q01', 'q02', 'q03', 'q04'];
+export const STORY_ORDER = ['trace', 'flower', 'icepath', 'guide', 'reply'];
 
 /** 설치 지점과 연결된 퀘스트 */
-export const SLOT_QUEST = { lantern: 'q02', shelter: 'shelter' };
+export const SLOT_QUEST = { lantern: 'q02', shelter: 'shelter', replyRest: 'reply', replyPath: 'reply', replySignal: 'reply' };
 
 export function taskResults(state, id) {
   return QUESTS[id].tasks.map((t) => ({ id: t.id, label: t.label, done: !!t.check(state) }));
@@ -163,12 +255,68 @@ export function evaluateQuests(state) {
   return events;
 }
 
-export const GIVER_NAMES = { pogeun: '포근', salgu: '살구', bora: '보라', ribbon: '리본', ribbonIce: '리본' };
-export const GIVER_PLACES = { pogeun: '캡슐 마을', salgu: '촉수 다리 앞', bora: '항해 전망대', ribbon: '다리 건너 교환 정원', ribbonIce: '얼음 성운' };
+export const GIVER_NAMES = { pogeun: '포근', salgu: '살구', bora: '보라', ribbon: '리본', ribbonIce: '리본', salguSolar: '살구' };
+export const GIVER_PLACES = { pogeun: '캡슐 마을', salgu: '촉수 다리 앞', bora: '항해 전망대', ribbon: '다리 건너 교환 정원', ribbonIce: '얼음 성운 선착장', salguSolar: '태양 정원 선착장' };
+export const REGION_NAMES = { solar: '태양 정원', ice: '얼음 성운', twilight: '황혼 합류지', overlook: '항해 전망대' };
 
-/** 챕터 진행도(메인 퀘스트 보상까지 끝낸 수) */
+/** 챕터 진행도(메인 퀘스트 보상까지 끝낸 수). 첫 챕터를 마치면 두 번째 이야기 기준 */
 export function chapterProgress(state) {
-  return { done: MAIN_ORDER.filter((id) => state.quests[id] === 'claimed').length, total: MAIN_ORDER.length };
+  if (state.world.chapterDone && state.story.traceSeen) {
+    return { done: STORY_ORDER.filter((id) => state.quests[id] === 'claimed').length, total: STORY_ORDER.length, story: true };
+  }
+  return { done: MAIN_ORDER.filter((id) => state.quests[id] === 'claimed').length, total: MAIN_ORDER.length, story: false };
+}
+
+/** 항해 기록: 발견한 지역·단서·아직 확인하지 못한 방향 */
+export function voyageLog(state) {
+  const S = state.story;
+  const visited = ['solar', 'ice', 'twilight'].filter((k) => state.voyage.visited[k]).map((k) => REGION_NAMES[k]);
+  const clues = S.clues.map((c) => (c === 'solar' ? '태양 정원: 꽃 속에서 쉬어 간 작은 빛' : '얼음 성운: 결정을 따라 이어진 헤엄 자국'));
+  let next = null;
+  if (!S.traceSeen) next = null;
+  else if (S.clues.length < 2) next = S.clues.includes('solar') ? '얼음 성운에 남은 흔적' : S.clues.includes('ice') ? '태양 정원에 남은 흔적' : '태양 정원·얼음 성운 중 한 곳';
+  else if (!S.cluesWoven) next = '두 흔적을 엮으면 드러날 방향';
+  else if (S.guideStep < 3) next = '황혼 합류지의 작은 해파리';
+  else if (!S.replySent) next = '다른 해파리들에게 보낼 답장';
+  return { visited, clues, next };
+}
+
+/** 두 번째 이야기의 현재 목표(행동 + 이유) */
+function storyObjective(state) {
+  const Q = state.quests;
+  const S = state.story;
+  const sc = state.scene;
+  const talk = (id) => `${GIVER_NAMES[QUESTS[id].giver]}와 이야기하기 · ${GIVER_PLACES[QUESTS[id].giver]}`;
+  const taskOf = (id) => taskResults(state, id).find((t) => !t.done)?.label ?? '조건을 모두 채웠어요';
+  if (!S.traceSeen) return null;
+  if (Q.trace !== 'claimed') {
+    // 지금 있는 곳의 흔적 퀘스트가 먼저
+    const local = sc === 'solar' ? 'flower' : sc === 'ice' ? 'icepath' : null;
+    if (local && !S.clues.includes(sc)) {
+      if (Q[local] === 'available') return { id: local, title: QUESTS[local].goal, text: talk(local), status: 'available' };
+      if (Q[local] === 'active') return { id: local, title: QUESTS[local].goal, text: taskOf(local), status: 'active' };
+    }
+    for (const id of ['flower', 'icepath']) {
+      if (Q[id] === 'completed') return { id, title: QUESTS[id].goal, text: `${GIVER_NAMES[QUESTS[id].giver]}에게 발견한 흔적 알리기 · ${GIVER_PLACES[QUESTS[id].giver]}`, status: 'completed' };
+    }
+    if (S.clues.length === 0) return { id: 'trace', title: QUESTS.trace.goal, text: '태양 정원이나 얼음 성운으로 항해해 흔적 찾기', status: 'active' };
+    if (S.shown < 1) return { id: 'trace', title: QUESTS.trace.goal, text: '보라에게 발견한 빛 보여 주기 · 항해 전망대', status: 'active' };
+    if (S.clues.length < 2) {
+      const other = S.clues.includes('solar') ? '얼음 성운' : '태양 정원';
+      return { id: 'trace', title: QUESTS.trace.goal, text: `${other}에 남은 두 번째 흔적 찾기 · 항해 나무에서 항로 고르기`, status: 'active' };
+    }
+    return { id: 'trace', title: QUESTS.trace.goal, text: '항해 나무에서 두 흔적을 엮어 방향 찾기', status: 'active' };
+  }
+  if (Q.guide === 'active') {
+    if (sc !== 'twilight') return { id: 'guide', title: QUESTS.guide.goal, text: '항해 나무에서 황혼 합류지로 항해하기', status: 'active' };
+    if (!S.jellyMet) return { id: 'guide', title: QUESTS.guide.goal, text: '희미한 빛 사이의 작은 해파리 찾기', status: 'active' };
+    return { id: 'guide', title: QUESTS.guide.goal, text: `작은 해파리가 따라올 은은한 빛길 잇기 (${S.guideStep} / 3)`, status: 'active' };
+  }
+  if (Q.reply === 'available') return { id: 'reply', title: QUESTS.reply.goal, text: talk('reply'), status: 'available' };
+  if (Q.reply === 'active') return { id: 'reply', title: QUESTS.reply.goal, text: taskOf('reply'), status: 'active' };
+  if (Q.reply === 'completed') return { id: 'reply', title: QUESTS.reply.goal, text: '보라에게 답장이 닿았는지 확인하기 · 항해 전망대', status: 'completed' };
+  if (Q.reply === 'claimed') return { id: null, title: '자유 탐험', text: '빛을 빚고 꾸미며 둘러봐요 · 다음 이야기는 준비 중이에요', status: 'free' };
+  return null;
 }
 
 /** HUD에 보여줄 현재 목표 하나: "행동과 목적"을 함께 */
@@ -189,6 +337,8 @@ export function currentObjective(state) {
     break;
   }
   if (state.world.chapterDone) {
+    const so = storyObjective(state);
+    if (so) return so;
     if (isDestination(state.scene)) return { id: null, title: '새로운 곳 둘러보기', text: '반짝이는 빛을 찾거나 선착장에서 돌아가기', status: 'claimed' };
     return { id: null, title: '첫 번째 숨결 완료', text: '다음 항로와 주민 부탁을 둘러보기', status: 'claimed' };
   }

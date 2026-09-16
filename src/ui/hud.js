@@ -1,7 +1,7 @@
 // 평상시 HUD: 로고, 위치, 현재 목표(행동+목적, 접으면 세부 조건 숨김), 설정·귀환, 형태 도크, 색 선택, 시점 조작.
 import { COLORS, FORMS, MOTIONS, byId } from '../game/catalog.js';
 import { progress as puzzleProgress } from '../game/puzzle.js';
-import { MAIN_ORDER, QUESTS, carriedLights, chapterProgress, currentObjective, isDestination, taskResults } from '../game/quests.js';
+import { MAIN_ORDER, QUESTS, STORY_ORDER, carriedLights, chapterProgress, currentObjective, isDestination, taskResults, voyageLog } from '../game/quests.js';
 import { craftOptions, hasUnlock } from '../game/state.js';
 import { assetUrl } from './assets.js';
 import { artIcon, h, icon } from './dom.js';
@@ -18,8 +18,9 @@ export function createHud(root, actions) {
   const qText = h('span', { class: 'q-text' });
   const qTasks = h('ul', { class: 'q-tasks' });
   const qSeed = h('span', { class: 'q-seed' });
+  const qLog = h('div', { class: 'q-log', 'aria-label': '항해 기록' });
   const qToggle = h('button', { class: 'q-toggle icon-btn', type: 'button', onClick: () => actions.toggleQuestCard() });
-  const qBody = h('div', { class: 'q-body', id: 'questBody' }, h('div', { class: 'q-progress' }, qSteps, qCount), qText, qTasks, qSeed);
+  const qBody = h('div', { class: 'q-body', id: 'questBody' }, h('div', { class: 'q-progress' }, qSteps, qCount), qText, qTasks, qLog, qSeed);
   const questCard = h(
     'section',
     { class: 'quest-card hud-panel', 'aria-label': '현재 목표' },
@@ -95,11 +96,28 @@ export function createHud(root, actions) {
         const obj = currentObjective(state);
         const pr = chapterProgress(state);
         qTitle.textContent = obj.title;
-        qSteps.replaceChildren(...MAIN_ORDER.map((id, i) => h('span', { class: `step ${i < pr.done ? 'on' : ''}`, title: QUESTS[id].title }, artIcon(['flower', 'thread', 'crystal', 'orb'][i]))));
-        qCount.textContent = `첫 번째 숨결 ${pr.done} / ${pr.total}`;
+        const order = pr.story ? STORY_ORDER : MAIN_ORDER;
+        const arts = pr.story ? ['mist', 'flower', 'crystal', 'thread', 'orb'] : ['flower', 'thread', 'crystal', 'orb'];
+        qSteps.replaceChildren(...order.map((id, i) => h('span', { class: `step ${state.quests[id] === 'claimed' ? 'on' : ''}`, title: QUESTS[id].title }, artIcon(arts[i]))));
+        qCount.textContent = `${pr.story ? '누군가 남긴 빛' : '첫 번째 숨결'} ${pr.done} / ${pr.total}`;
         qText.textContent = obj.text;
         const tasks = obj.id && state.quests[obj.id] !== 'available' ? taskResults(state, obj.id) : [];
         qTasks.replaceChildren(...tasks.map((t) => h('li', { class: t.done ? 'is-done' : '' }, h('span', { class: 'task-box', 'aria-hidden': 'true' }, t.done ? icon('check') : null), t.label)));
+      }
+      // 항해 기록: 발견한 지역·단서·아직 확인하지 못한 방향
+      const log = state.story.traceSeen ? voyageLog(state) : null;
+      qLog.hidden = !log;
+      if (log) {
+        qLog.replaceChildren(
+          h('strong', {}, '항해 기록'),
+          h(
+            'ul',
+            {},
+            h('li', {}, `다녀온 곳: ${log.visited.join(', ') || '아직 없음'}`),
+            ...(log.clues.length ? log.clues.map((c) => h('li', {}, `단서 · ${c}`)) : [h('li', {}, '단서: 아직 없음')]),
+            h('li', {}, log.next ? `남은 방향: ${log.next}` : '모든 흔적을 이었어요'),
+          ),
+        );
       }
       const carried = carriedLights(state);
       qSeed.textContent = `별빛 씨앗 ${state.materials.seed}개${state.materials.shard ? ` · 결정 조각 ${state.materials.shard}개` : ''}${carried.length ? ` · 들고 있는 빛 ${carried.length}` : ''}`;

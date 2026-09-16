@@ -295,6 +295,72 @@
   background: rgba(255, 255, 255, 0.7);
 }
 
+/* ------------------------------------------------ 빛 비추기 패널 */
+.use-panel {
+  width: 380px;
+}
+.use-need {
+  align-items: flex-start;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.use-need-ico {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(255, 244, 220, 0.8);
+  color: var(--peach-deep, #d9814f);
+}
+.use-light {
+  margin-top: 8px;
+}
+.use-result {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  border-radius: 18px;
+  font-size: 15px;
+  line-height: 1.45;
+  background: rgba(201, 183, 238, 0.28);
+  color: var(--ink);
+}
+.use-result[data-tone='good'] {
+  background: rgba(185, 240, 218, 0.45);
+}
+.use-result[data-tone='warn'] {
+  background: rgba(255, 208, 169, 0.42);
+}
+.use-panel .sp-actions .btn[hidden] {
+  display: none;
+}
+
+/* 목표 카드: 항해 기록 */
+.q-log {
+  margin: 8px 0 2px;
+  padding: 8px 10px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.35);
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink-muted);
+}
+.q-log strong {
+  display: block;
+  font-size: 13px;
+  color: var(--ink);
+  margin-bottom: 2px;
+}
+.q-log ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.q-log li + li {
+  margin-top: 2px;
+}
+
 /* ------------------------------------------------ 대화 */
 .dialogue-layer {
   position: absolute;

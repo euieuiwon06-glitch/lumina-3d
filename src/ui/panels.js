@@ -1,6 +1,6 @@
 // 대상 근처에 뜨는 작은 패널들: 상호작용 안내, 빛 놓기, 빛 작업대, 결정의 노래, 주민 말풍선.
 // 앵커는 3D 위치를 화면에 투영한 무대 좌표({ x, y, visible })다.
-import { COLORS, MOTIONS, SOFT_BRIGHTNESS, byId, lightName } from '../game/catalog.js';
+import { COLORS, MOTIONS, REPLY_SPOTS, SOFT_BRIGHTNESS, byId, lightName } from '../game/catalog.js';
 import { carriedLights, lightAt } from '../game/quests.js';
 import { craftCost, craftOptions, slotAvailability } from '../game/state.js';
 import { stage } from '../engine/stage.js';
@@ -101,6 +101,8 @@ export function createSlotPanel(root, actions) {
   const props = h('p', { class: 'sp-placed' });
   const hint = h('p', { class: 'sp-hint' }, icon('wave'), h('span', {}, '놓기 전 자리에 미리 보여요. 거두면 다시 들고 다녀요.'));
   const reason = h('p', { class: 'sp-reason' });
+  const needText = h('span', {});
+  const need = h('p', { class: 'sp-hint use-need' }, icon('sun'), needText);
   const placeBtn = h('button', { class: 'btn btn-primary', type: 'button', onClick: () => actions.place() }, icon('check', 'btn-check'), '놓기');
   const retrieveBtn = h('button', { class: 'btn btn-quiet', type: 'button', onClick: () => actions.retrieve() }, '거두기');
   const closeBtn = h('button', { class: 'icon-btn sp-close', type: 'button', 'aria-label': '패널 닫기', onClick: () => actions.closePanel() }, icon('close'));
@@ -109,6 +111,7 @@ export function createSlotPanel(root, actions) {
     { class: 'slot-panel hud-panel', role: 'group', 'aria-labelledby': 'slotPanelTitle' },
     h('div', { class: 'sp-head' }, h('div', {}, name, where), closeBtn),
     props,
+    need,
     hint,
     reason,
     h('div', { class: 'sp-actions' }, retrieveBtn, placeBtn),
@@ -139,6 +142,67 @@ export function createSlotPanel(root, actions) {
       retrieveBtn.disabled = !av.canRetrieve;
       reason.textContent = av.reason ?? '';
       reason.hidden = !av.reason;
+      // 답장 자리: 어떤 빛이 어울리는지 조건과 지금 빛의 충족 여부(색은 자유)
+      const rule = REPLY_SPOTS.find((r) => r.slot === slot.id);
+      need.hidden = !rule;
+      if (rule) needText.textContent = `어울리는 빛: ${rule.need} · 색과 형태는 자유${L ? (rule.check(L) ? ' — 지금 빛이 잘 어울려요 ✓' : ' — 지금 빛은 조건과 달라요') : ''}`;
+      if (anchor) placeBeside(el, anchor, player);
+    },
+  };
+}
+
+// ------------------------------------------------------------------ 빛 비추기(꽃·결정 흔적·빛길): 들고 있는 빛을 대상에 비추고 반응을 본다
+
+/**
+ * info: { title, where, need, needIcon, light, result, resultTone, useLabel, canUse, readLabel }
+ * light: 들고 있는 빛(없으면 null). 비춘 빛은 사라지지 않는다
+ */
+export function createUsePanel(root, actions) {
+  const name = h('strong', { class: 'sp-name', id: 'usePanelTitle' });
+  const where = h('span', { class: 'sp-where' });
+  const needIco = h('span', { class: 'use-need-ico', 'aria-hidden': 'true' });
+  const needText = h('span', {});
+  const need = h('p', { class: 'sp-hint use-need' }, needIco, needText);
+  const lightRow = h('p', { class: 'sp-placed use-light' });
+  const result = h('p', { class: 'use-result', role: 'status', 'aria-live': 'polite' });
+  const craftBtn = h('button', { class: 'btn btn-quiet', type: 'button', onClick: () => actions.fieldCraft() }, '빛 빚기·조절');
+  const useBtn = h('button', { class: 'btn btn-primary', type: 'button', onClick: () => actions.useLight() }, icon('sparkle', 'btn-check'), h('span', {}));
+  const readBtn = h('button', { class: 'btn btn-primary', type: 'button', onClick: () => actions.readTrace() }, icon('eye', 'btn-check'), h('span', {}));
+  const closeBtn = h('button', { class: 'icon-btn sp-close', type: 'button', 'aria-label': '패널 닫기', onClick: () => actions.closePanel() }, icon('close'));
+  const el = h(
+    'section',
+    { class: 'slot-panel use-panel hud-panel', role: 'group', 'aria-labelledby': 'usePanelTitle' },
+    h('div', { class: 'sp-head' }, h('div', {}, name, where), closeBtn),
+    need,
+    lightRow,
+    result,
+    h('div', { class: 'sp-actions' }, craftBtn, useBtn, readBtn),
+  );
+  el.hidden = true;
+  root.append(el);
+  return {
+    el,
+    update({ info, anchor, player }) {
+      if (!info) {
+        el.hidden = true;
+        return;
+      }
+      el.hidden = false;
+      name.textContent = info.title;
+      where.textContent = info.where;
+      needIco.replaceChildren(icon(info.needIcon ?? 'sparkle'));
+      needText.textContent = info.need;
+      const L = info.light;
+      lightRow.textContent = L ? `들고 있는 빛: ${lightName(L)} · ${byId(MOTIONS, L.motion).label} · 밝기 ${L.brightness}` : '들고 있는 빛이 없어요. 여기서 바로 빚을 수 있어요.';
+      result.textContent = info.result ?? '';
+      result.hidden = !info.result;
+      result.dataset.tone = info.resultTone ?? '';
+      useBtn.lastChild.textContent = info.useLabel ?? '이 빛 비추기';
+      useBtn.hidden = !!info.readLabel;
+      useBtn.disabled = !L || !info.canUse;
+      readBtn.hidden = !info.readLabel;
+      readBtn.lastChild.textContent = info.readLabel ?? '';
+      craftBtn.hidden = !!info.readLabel;
       if (anchor) placeBeside(el, anchor, player);
     },
   };
@@ -192,13 +256,18 @@ export function createCraftPanel(root, actions) {
   root.append(el);
   return {
     el,
-    update({ state, open, anchor, player }) {
+    update({ state, open, anchor, player, field = null }) {
       el.hidden = !open;
       if (!open) return;
       const d = state.draft;
       const opt = craftOptions(state);
       name.textContent = lightName(d);
-      where.textContent = state.world.firstCrafted ? `둥근 작업대 · 별빛 씨앗 ${state.materials.seed}개` : '둥근 작업대 · 첫 빛은 재료 없이 빚어요';
+      const cost0 = craftCost(state);
+      where.textContent = field
+        ? `${field} 앞에서 빚기 · ${cost0 ? `별빛 씨앗 ${state.materials.seed}개` : '손에 든 빛이 없으면 재료 없이'}`
+        : state.world.firstCrafted
+          ? `둥근 작업대 · 별빛 씨앗 ${state.materials.seed}개`
+          : '둥근 작업대 · 첫 빛은 재료 없이 빚어요';
       for (const { c, b } of colorBtns) {
         const on = d.color === c.id;
         b.hidden = !opt.colors.includes(c.id);
@@ -226,7 +295,13 @@ export function createCraftPanel(root, actions) {
       craftBtn.title = craftBtn.disabled ? '별빛 씨앗이 필요해요' : '';
       const carried = carriedLights(state).filter((l) => l.origin === 'crafted');
       reshapeBtn.hidden = !carried.length;
-      status.lastChild.textContent = carried.length ? `들고 있는 빛 ${carried.length}개 · 다시 빚기는 재료가 들지 않아요` : '빚은 빛은 들고 다니다가 설치 지점에 놓아요';
+      status.lastChild.textContent = field
+        ? carried.length
+          ? '다시 빚기로 들고 있는 빛을 바꾼 뒤, 닫고 다시 비춰 봐요'
+          : '빛을 빚은 뒤 닫고 대상에 비춰 봐요'
+        : carried.length
+          ? `들고 있는 빛 ${carried.length}개 · 다시 빚기는 재료가 들지 않아요`
+          : '빚은 빛은 들고 다니다가 설치 지점에 놓아요';
       if (anchor) placeBeside(el, anchor, player);
     },
   };

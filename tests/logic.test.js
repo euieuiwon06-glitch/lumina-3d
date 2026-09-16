@@ -107,7 +107,7 @@ test('Q04: 빛 기여 → 목적지 선택 → 출항, 완료는 도착해 조�
   s = run(s, { type: 'arrivalControl' });
   assert.equal(s.quests.q04, 'claimed');
   assert.equal(s.world.chapterDone, true);
-  assert.deepEqual(chapterProgress(s), { done: 4, total: 4 });
+  assert.deepEqual(chapterProgress(s), { done: 4, total: 4, story: false });
   const again = run(s, { type: 'arrivalControl' });
   assert.equal(again.materials.seed, s.materials.seed, '도착 보상 중복 없음');
   s = run(s, { type: 'depart' });

@@ -37,9 +37,19 @@ export const NPCS = {
     role: '쉼터 주민',
     where: (s) => (s.quests.shelter === 'claimed' ? { scene: 'neighborhood', at: 'POI_주민대화', offset: [-2.2, 2.4], resting: true } : { scene: 'neighborhood', at: 'POI_주민대화', offset: [0, 0] }),
   },
-  // 도착지 동행(첫 항해를 함께한 주민)
-  ribbonIce: { name: '리본', model: 'vine', role: '빛 수집가', where: () => ({ scene: 'ice', at: 'ENTRY_해파리선착장', offset: [2.6, -3.2] }) },
-  salguSolar: { name: '살구', model: 'flower', role: '길 앞 주민', where: () => ({ scene: 'solar', at: 'ENTRY_해파리외부항해_착륙지점', offset: [2.6, -3.2] }) },
+  // 도착지 동행(첫 항해를 함께한 주민). 흔적 부탁을 해결하면 조사한 곳 곁으로 옮겨 간다
+  ribbonIce: {
+    name: '리본',
+    model: 'vine',
+    role: '빛 수집가',
+    where: (s) => (s.quests.icepath === 'claimed' ? { scene: 'ice', at: 'POI_수정바위_채집', offset: [-2.2, 3.4] } : { scene: 'ice', at: 'ENTRY_해파리선착장', offset: [2.6, -3.2] }),
+  },
+  salguSolar: {
+    name: '살구',
+    model: 'flower',
+    role: '길 앞 주민',
+    where: (s) => (s.quests.flower === 'claimed' ? { scene: 'solar', at: 'POI_태양씨앗숲_따뜻한빛재료', offset: [5.2, 3.6] } : { scene: 'solar', at: 'ENTRY_해파리외부항해_착륙지점', offset: [2.6, -3.2] }),
+  },
 };
 
 export const SCENE_INFO = {
@@ -63,7 +73,10 @@ export const SCENE_INFO = {
       { at: 'ENTRY_정원_교환광장', label: '빛 제작실로 들어가기', kind: 'door' },
       { at: 'EXIT_촉수산책로', label: '촉수 다리로 가기', kind: 'door' },
     ],
-    slots: [{ id: 'shelter', label: '포근의 쉼터', at: 'POI_주민대화', offset: [-2.2, 1.2], showWhen: (s) => atLeast(s, 'shelter', 'active') }],
+    slots: [
+      { id: 'shelter', label: '포근의 쉼터', at: 'POI_주민대화', offset: [-2.2, 1.2], showWhen: (s) => atLeast(s, 'shelter', 'active') },
+      { id: 'replyRest', label: '쉼터 답장 자리', at: 'POI_주민대화', offset: [2.6, -1.8], need: '밝기 60 이하의 은은한 빛', showWhen: (s) => atLeast(s, 'reply', 'active') },
+    ],
   },
   nursery: {
     name: '씨앗 온실',
@@ -80,7 +93,10 @@ export const SCENE_INFO = {
       { at: 'ENTRY_주거구역', label: '캡슐 마을로 돌아가기', kind: 'door' },
       { at: 'EXIT_전망대_항해정원', label: '꽃잎 승강대로 전망대 오르기', kind: 'lift', lockedUntil: (s) => (s.world.bridgeRestored ? null : '판석 다리가 흩어져 있어요. 등불 세 개의 박자를 맞추면 길이 이어져요.') },
     ],
-    slots: [{ id: 'lantern', label: '첫 등불', at: 'QUEST_다리앞', offset: [0, 0], showWhen: () => true }],
+    slots: [
+      { id: 'lantern', label: '첫 등불', at: 'QUEST_다리앞', offset: [0, 0], showWhen: () => true },
+      { id: 'replyPath', label: '산책길 답장 자리', at: 'QUEST_빛복원_4', offset: [1.6, 0.4], need: '밝기 50 이상의 길잡이 빛', showWhen: (s) => atLeast(s, 'reply', 'active') },
+    ],
     // 박자가 어긋난 등불(조율 대상)과 복원 뒤 함께 켜지는 등불
     offbeat: ['QUEST_빛복원_2', 'QUEST_빛복원_3'],
     later: ['QUEST_빛복원_4', 'MARK_고정빛봉오리_3'],
@@ -100,8 +116,13 @@ export const SCENE_INFO = {
     start: 'ENTRY_촉수산책로',
     exits: [
       { at: 'ENTRY_촉수산책로', label: '꽃잎 승강대로 촉수 다리 내려가기', kind: 'lift' },
-      { at: 'ENTRY_반대편길', label: '반대편 길', kind: 'door', lockedUntil: () => '반대편 길의 빛기둥이 아직 잠들어 있어요. 다음 항해 뒤에 열려요.' },
+      { at: 'ENTRY_반대편길', label: '반대편 길', kind: 'door', lockedUntil: () => '반대편 길의 빛기둥이 아직 잠들어 있어요. 다음 이야기에서 열려요.' },
     ],
+    slots: [{ id: 'replySignal', label: '전망대 답장 자리', at: 'POI_출항준비_빛오르간', offset: [-4.2, 4.6], need: '밝기 80 이상의 신호 빛', showWhen: (s) => atLeast(s, 'reply', 'active') }],
+    // 누군가 남긴 낯선 빛(첫 항해 뒤 전망대에서 사건을 볼 때)
+    trace: { at: 'POI_출항준비_빛오르간', offset: [-2.5, 6.5] },
+    // 답장을 받은 뒤 작은 해파리가 머무는 곳(테라스 너머 하늘)
+    jellyStay: [8, 3.2, -18],
     organ: {
       at: 'POI_출항준비_빛오르간',
       label: '항해 나무',
@@ -129,6 +150,9 @@ export const SCENE_INFO = {
       { at: 'EXIT_오른쪽_부유선반', label: '부유 선반', kind: 'door', lockedUntil: () => '부유 선반으로 가는 결정이 잠들어 있어요.' },
     ],
     discoveries: [{ id: 'iceAurora', at: 'POI_수정바위_채집', offset: [2.4, 1.2], label: '오로라 결정' }],
+    trace: { at: 'ENTRY_해파리선착장', offset: [-3.2, -4.5] },
+    // 얼음 속에 남은 길: 결정 앞 조사 지점 세 곳(순서대로 이어진다)
+    iceTraces: { at: 'POI_수정바위_채집', offsets: [[-3.6, 0.6], [-6.2, -2.3], [-10.9, -2.0]] },
     puzzle: { at: 'POI_수정바위_채집', label: '노래하는 결정', tones: [523.25, 659.25, 783.99], showWhen: (s) => atLeast(s, 'song', 'active') },
   },
   solar: {
@@ -143,6 +167,9 @@ export const SCENE_INFO = {
       { at: 'EXIT_길굽이_먼섬조망', label: '먼 섬 조망', kind: 'door', lockedUntil: () => '먼 섬으로 가는 길은 아직 구름에 덮여 있어요.' },
     ],
     discoveries: [{ id: 'solarGrove', at: 'POI_태양씨앗숲_따뜻한빛재료', offset: [0, 0], label: '태양씨앗 숲' }],
+    trace: { at: 'ENTRY_해파리외부항해_착륙지점', offset: [-3.2, -4.5] },
+    // 눈부셔서 숨은 꽃: 태양씨앗 숲 가장자리의 닫힌 꽃
+    flower: { at: 'POI_태양씨앗숲_따뜻한빛재료', offset: [3.4, 1.8] },
   },
   twilight: {
     name: '황혼 합류지',
@@ -151,6 +178,8 @@ export const SCENE_INFO = {
     start: 'ENTRY_외부항해_도착테라스',
     exits: [{ at: 'ENTRY_외부항해_도착테라스', label: '해파리로 돌아가기', kind: 'dock' }],
     discoveries: [{ id: 'twilightShard', at: 'POI_따뜻함차가움_공명조각', offset: [0, 0], label: '공명 조각' }],
+    // 이쪽으로 와도 괜찮아: 먼 계단섬(from)에서 선착장(to)까지 길을 따라 빛길 지점 세 곳(마지막은 선착장 곁)
+    jelly: { from: 'POI_따뜻함차가움_공명조각', to: 'ENTRY_외부항해_도착테라스', stops: [0.36, 0.68, 0.94] },
   },
 };
 

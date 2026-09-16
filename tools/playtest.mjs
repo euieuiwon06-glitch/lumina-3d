@@ -265,6 +265,15 @@ st = await S();
 ok('도착해 조작을 되찾으며 챕터 완료', st.world.arrived && st.world.chapterDone && st.quests.q04 === 'claimed');
 await sleep(1200);
 await shot('chapter-done');
+// 첫 항해 뒤 낯선 빛 → 동행 주민 반응 → '누군가 남긴 빛' 자동 등록
+await page.waitForSelector('.dialogue', { state: 'visible', timeout: 15000 });
+await shot('trace-light');
+const traceText = await page.innerText('.dialogue');
+await finishDialogue();
+await waitFor(() => window.lumina.state.story.traceSeen, 5000).catch(() => {});
+st = await S();
+ok('첫 항해 뒤 낯선 빛 · 새 목표 자동 등록', traceText.includes('우리 해파리') && st.story.traceSeen && st.quests.trace === 'active');
+await sleep(800);
 await act('discovery', 'iceAurora');
 ok('새 지역 빛 발견', (await S()).unlocks.includes('auroraLight'));
 

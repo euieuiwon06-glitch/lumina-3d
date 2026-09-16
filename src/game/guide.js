@@ -30,6 +30,10 @@ export function objectiveGoal(state) {
   if (Q.q03 === 'completed') return npcGoal(S, 'ribbon');
   if (Q.q04 === 'available') return npcGoal(S, 'bora');
   if (Q.q04 === 'active' && !isDestination(S.scene)) return { scene: 'overlook', kind: 'organ', id: 'organ', label: '항해 나무' };
+  if (W.chapterDone && S.story.traceSeen) {
+    const g = storyGoal(S);
+    if (g !== undefined) return g;
+  }
   // 챕터 뒤: 도착지에서는 아직 못 찾은 빛, 그다음 선착장
   if (W.chapterDone && isDestination(S.scene)) {
     const d = (SCENE_INFO[S.scene].discoveries ?? []).find((x) => !S.discovered.includes(x.id));
@@ -39,6 +43,53 @@ export function objectiveGoal(state) {
   if (Q.shelter === 'active') return { scene: 'neighborhood', kind: 'slot', id: 'shelter', label: '포근의 쉼터' };
   if (Q.shelter === 'completed') return npcGoal(S, 'pogeun');
   return null;
+}
+
+const ORGAN = { scene: 'overlook', kind: 'organ', id: 'organ', label: '항해 나무' };
+
+/** 두 번째 이야기의 목표 지점. undefined면 기존 규칙으로 */
+function storyGoal(S) {
+  const Q = S.quests;
+  const T = S.story;
+  const clue = (id) => T.clues.includes(id);
+  if (Q.trace !== 'claimed') {
+    // 지금 있는 지역의 흔적부터
+    if (S.scene === 'solar' && !clue('solar')) {
+      if (Q.flower === 'available') return npcGoal(S, 'salguSolar');
+      if (Q.flower === 'active') return { scene: 'solar', kind: 'flower', id: 'flower', label: T.flowerOpen ? '꽃 속 빛의 흔적' : '숨은 꽃' };
+    }
+    if (S.scene === 'ice' && !clue('ice')) {
+      if (Q.icepath === 'available') return npcGoal(S, 'ribbonIce');
+      if (Q.icepath === 'active') {
+        if (!S.discovered.includes('iceAurora')) return { scene: 'ice', kind: 'discovery', id: 'iceAurora', label: '오로라 결정' };
+        const n = Math.min(2, T.iceTraces.length);
+        return { scene: 'ice', kind: 'iceTrace', id: `trace${n}`, label: T.iceTraces.length >= 3 ? '이어진 흔적' : '결정 속 흔적' };
+      }
+    }
+    if (Q.flower === 'completed') return npcGoal(S, 'salguSolar');
+    if (Q.icepath === 'completed') return npcGoal(S, 'ribbonIce');
+    if (T.clues.length >= 1 && T.shown < 1) return npcGoal(S, 'bora');
+    if (T.clues.length >= 2) return { ...ORGAN, label: '항해 나무 · 두 흔적 엮기' };
+    // 다음 지역으로: 전망대의 항해 나무에서 항로를 고른다
+    const want = clue('solar') ? 'ice' : clue('ice') ? 'solar' : null;
+    if (want) return { scene: want, kind: 'npc', id: want === 'solar' ? 'salguSolar' : 'ribbonIce', label: want === 'solar' ? '태양 정원' : '얼음 성운' };
+    return isDestination(S.scene) ? { ...ORGAN, label: '항해 나무 · 다른 지역 찾기' } : { ...ORGAN, label: '항해 나무 · 항로 고르기' };
+  }
+  if (Q.guide === 'active') {
+    if (S.scene !== 'twilight') return { scene: 'twilight', kind: 'jelly', id: 'jelly', label: '황혼 합류지' };
+    if (!T.jellyMet) return { scene: 'twilight', kind: 'jelly', id: 'jelly', label: '작은 해파리' };
+    return { scene: 'twilight', kind: 'guidePt', id: `guide${Math.min(2, T.guideStep)}`, label: '빛길 지점' };
+  }
+  if (Q.reply === 'available' || Q.reply === 'completed') return npcGoal(S, 'bora');
+  if (Q.reply === 'active') {
+    const where = { replyRest: ['neighborhood', '쉼터 답장 자리'], replyPath: ['walkway', '산책길 답장 자리'], replySignal: ['overlook', '전망대 답장 자리'] };
+    // 지금 있는 지역의 빈 자리부터 안내한다
+    const open = Object.entries(where).filter(([slot]) => !QUESTS.reply.tasks.find((t) => t.id === slot).check(S));
+    const pick = open.find(([, [scene]]) => scene === S.scene) ?? open[0];
+    if (pick) return { scene: pick[1][0], kind: 'slot', id: pick[0], label: pick[1][1] };
+    return { ...ORGAN, label: '항해 나무 · 답장 보내기' };
+  }
+  return undefined;
 }
 
 /** 장면 이동 그래프: 장면 → [{ via: 출구 표시, to: 장면 }] */
@@ -83,7 +134,13 @@ export function guideTarget(state) {
   const goal = objectiveGoal(state);
   if (!goal) return null;
   if (goal.scene === state.scene) return { ...goal, final: true };
-  const via = nextExit(state.scene, goal.scene);
+  // 먼 지역은 걸어서 못 가므로 전망대의 항해 나무에서 항로를 고르게 안내한다
+  let dest = goal.scene;
+  if (isDestination(goal.scene)) {
+    if (state.scene === 'overlook') return { scene: 'overlook', kind: 'organ', id: 'organ', label: '항해 나무에서 항로 고르기', final: false, towards: goal };
+    dest = 'overlook';
+  }
+  const via = nextExit(state.scene, dest);
   if (!via) return null;
   const exitInfo = SCENE_INFO[state.scene].exits.find((e) => e.at === via);
   return { scene: state.scene, kind: 'exit', id: via, label: exitInfo?.label ?? '다음 장소로', final: false, towards: goal };
