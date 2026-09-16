@@ -206,6 +206,23 @@ for (const cp of LIST) {
         qText: t('.quest-card .q-text'),
         qTasks: [...document.querySelectorAll('.quest-card .q-tasks li')].map((li) => li.textContent.trim()),
         pointer: vis('.obj-pointer') ? t('.obj-pointer') : null,
+        fit: (() => {
+          const card = document.querySelector('.quest-card');
+          if (!card) return null;
+          const cr = card.getBoundingClientRect();
+          const inner = card.getBoundingClientRect().right - parseFloat(getComputedStyle(card).paddingRight);
+          let worst = 0;
+          let who = '';
+          for (const el of card.querySelectorAll('.q-title, .q-text, .q-tasks li, .q-log li, .q-seed, .q-count')) {
+            const r = document.createRange();
+            r.selectNodeContents(el);
+            for (const b of r.getClientRects()) {
+              const over = b.right - inner;
+              if (over > worst) { worst = over; who = el.textContent.trim().slice(0, 24); }
+            }
+          }
+          return { w: Math.round(cr.width), over: Math.round(worst), who };
+        })(),
       };
     });
     if (shots) {
@@ -229,6 +246,7 @@ for (const r of rows) {
   console.log(`   목표카드 : ${r.qTitle} / ${r.qText}`);
   if (r.qTasks.length) console.log(`   할 일    : ${r.qTasks.join(' | ')}`);
   console.log(`   목표표시 : ${r.pointer ?? '— 없음 —'}`);
+  if (r.fit) console.log(`   카드폭   : ${r.fit.w}px · 오른쪽 넘침 ${r.fit.over}px${r.fit.who ? ` (${r.fit.who})` : ''}`);
   if (r.errs.length) console.log(`   오류     : ${r.errs.slice(0, 2).join(' / ')}`);
 }
 await browser.close();

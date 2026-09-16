@@ -6,7 +6,7 @@
 
 /* 목표 카드: 행동+목적 제목, 챕터 진행 줄, 펼친 세부 조건 */
 .quest-card {
-  width: 320px;
+  width: 340px;
 }
 .q-progress {
   flex-wrap: nowrap;
