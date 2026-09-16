@@ -1406,6 +1406,13 @@ async function boot() {
       const d = (SCENE_INFO[sc].discoveries ?? []).find((x) => !isDiscovered(S, x.id));
       return d ? `반짝이는 **${d.label}**의 빛을 찾아봐요` : '선착장에서 **해파리로 돌아가요**';
     }
+    // 첫 항해를 마치고 해파리 안으로 돌아온 참: 다음 이야기는 전망대에서 이어진다
+    if (W.chapterDone && !S.story.traceSeen) {
+      if (sc === 'overlook') return '**항해 나무**에서 다음 **항로**를 골라 새로운 곳으로 가요';
+      const g = guideTarget(S);
+      const via = g?.kind === 'exit' ? g.label : null;
+      return via ? `**${via}** · 보라가 **항해 전망대**에서 다음 항로를 기다려요` : '**항해 전망대**로 올라가 보라와 다음 항로를 정해요';
+    }
     return null;
   }
 
@@ -1479,6 +1486,11 @@ async function boot() {
     if (S.quests.q04 === 'available') return find('npc', 'bora') ?? find('exit', 'EXIT_전망대_항해정원');
     if (S.quests.q04 === 'active') return find('organ');
     if (W.chapterDone && isDestination(S.scene)) return find('discovery') ?? find('exit');
+    // 낯선 빛을 아직 못 본 채 해파리 안에 있으면 전망대로 이어지는 출구를 가리킨다
+    if (W.chapterDone && !S.story.traceSeen) {
+      const g = guideTarget(S);
+      return g ? (find(g.kind, g.id) ?? null) : null;
+    }
     return null;
   }
 

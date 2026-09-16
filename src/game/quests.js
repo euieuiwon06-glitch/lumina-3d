@@ -340,7 +340,8 @@ export function currentObjective(state) {
     const so = storyObjective(state);
     if (so) return so;
     if (isDestination(state.scene)) return { id: null, title: '새로운 곳 둘러보기', text: '반짝이는 빛을 찾거나 선착장에서 돌아가기', status: 'claimed' };
-    return { id: null, title: '첫 번째 숨결 완료', text: '다음 항로와 주민 부탁을 둘러보기', status: 'claimed' };
+    // 첫 항해를 마치고 해파리 안으로 돌아온 참: 다음 이야기는 전망대에서 시작한다
+    return { id: null, title: '다음 항로 정하기', text: '항해 전망대의 항해 나무로 가기 · 보라가 기다려요', status: 'claimed' };
   }
   return { id: null, title: '해파리의 첫 항해 되살리기', text: '주변을 둘러보기', status: 'none' };
 }

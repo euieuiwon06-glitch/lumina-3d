@@ -42,6 +42,8 @@ export function objectiveGoal(state) {
   // 선택형 부탁을 받은 상태면 그쪽으로
   if (Q.shelter === 'active') return { scene: 'neighborhood', kind: 'slot', id: 'shelter', label: '포근의 쉼터' };
   if (Q.shelter === 'completed') return npcGoal(S, 'pogeun');
+  // 첫 항해를 마치고 해파리 안으로 돌아왔는데 아직 낯선 빛을 못 봤다면 전망대로 이끈다
+  if (W.chapterDone && !S.story.traceSeen && !isDestination(S.scene)) return { ...ORGAN, label: '항해 나무 · 다음 항로 고르기' };
   return null;
 }
 

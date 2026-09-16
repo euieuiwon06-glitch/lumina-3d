@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { guideTarget, objectiveGoal } from '../src/game/guide.js';
 import { currentObjective, voyageLog } from '../src/game/quests.js';
 import { availableRoutes, canDepart, craftCost, createInitialState, reduce, replyReady, sanitize, slotAvailability } from '../src/game/state.js';
 
@@ -168,4 +169,23 @@ test('예전 저장(두 번째 이야기 필드 없음)은 지우지 않고 기�
   assert.equal(state.story.traceSeen, false);
   const next = run(state, { type: 'seeTrace' });
   assert.equal(next.quests.trace, 'active', '다음 입장에서 사건 시작');
+});
+
+test('첫 항해 뒤 해파리 안으로 돌아와도 안내가 끊기지 않고 전망대로 이어진다', () => {
+  const arrived = afterChapter('ice');
+  assert.equal(arrived.story.traceSeen, false, '낯선 빛은 아직');
+  for (const scene of ['workshop', 'neighborhood', 'walkway']) {
+    const s = at(arrived, scene);
+    const obj = currentObjective(s);
+    assert.equal(obj.title, '다음 항로 정하기', `${scene} 목표 카드`);
+    assert.match(obj.text, /항해 전망대/, `${scene} 목표 설명`);
+    const goal = objectiveGoal(s);
+    assert.equal(goal?.scene, 'overlook', `${scene} 목표 지점은 전망대`);
+    const target = guideTarget(s);
+    assert.equal(target?.kind, 'exit', `${scene}에서는 먼저 출구를 안내`);
+    assert.equal(target?.towards.scene, 'overlook');
+  }
+  // 도착지에 남아 있을 때는 기존대로 그곳의 빛을 먼저 안내한다
+  const away = currentObjective(arrived);
+  assert.equal(away.title, '새로운 곳 둘러보기');
 });
