@@ -3008,6 +3008,7 @@ async function boot() {
   }
 
   window.lumina = {
+    THREE, // 검수 도구에서 광선·경계상자를 쓰려면 필요
     get state() {
       return state;
     },
