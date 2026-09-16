@@ -8,14 +8,14 @@ import { BASE, gltfLoader } from './world.js';
 // 반투명 막(블렌더 재질 값, 선형): 가운데는 비치고 가장자리는 밝고 짙게
 // 색은 참고 일러스트처럼 화사한 파스텔: 라일락 막, 살구빛 가장자리, 민트빛 결정
 const MEMBRANE = {
-  Jelly_Bell: { base: [0.7, 0.54, 1.0], rim: [1.0, 0.68, 0.86], alpha: [0.12, 0.62], glow: 0.62 },
-  Jelly_Rim: { base: [0.92, 0.62, 0.92], rim: [1.0, 0.74, 0.62], alpha: [0.32, 0.86], glow: 0.72 },
-  Jelly_Tentacle: { base: [0.6, 0.44, 1.0], rim: [1.0, 0.66, 0.8], alpha: [0.24, 0.74], glow: 0.7 },
-  Lantern_Pod: { base: [1.0, 0.86, 0.72], rim: [1.0, 0.7, 0.45], alpha: [0.55, 0.98], glow: 1.4 },
-  Crystal: { base: [0.66, 0.98, 0.95], rim: [0.86, 1.0, 0.98], alpha: [0.55, 0.95], glow: 1.1 },
+  Jelly_Bell: { base: [0.66, 0.44, 1.0], rim: [1.0, 0.58, 0.86], alpha: [0.14, 0.66], glow: 0.55, sat: 1.35 },
+  Jelly_Rim: { base: [0.96, 0.52, 0.94], rim: [1.0, 0.66, 0.52], alpha: [0.34, 0.88], glow: 0.62, sat: 1.35 },
+  Jelly_Tentacle: { base: [0.56, 0.36, 1.0], rim: [1.0, 0.56, 0.78], alpha: [0.26, 0.76], glow: 0.6, sat: 1.35 },
+  Lantern_Pod: { base: [1.0, 0.84, 0.6], rim: [1.0, 0.62, 0.32], alpha: [0.55, 0.98], glow: 1.15, sat: 1.2 },
+  Crystal: { base: [0.54, 0.99, 0.94], rim: [0.8, 1.0, 0.98], alpha: [0.55, 0.95], glow: 0.95, sat: 1.25 },
 };
-// 구운 부분(정원·섬)·하늘을 밝히는 정도: 곱한 뒤 라일락빛을 살짝 더해 어두운 곳을 띄운다
-const BRIGHT = { baked: 1.15, sky: 1.12, lift: [0.02, 0.018, 0.06] };
+// 구운 부분(정원·섬)·하늘: 곱해서 띄우기만 하면 색이 빠지므로, 띄움을 줄이고 채도를 함께 올린다
+const BRIGHT = { baked: 1.18, sky: 1.12, lift: [0.012, 0.01, 0.034], sat: { baked: 1.46, sky: 1.5 } };
 
 // 촉수 물결(해파리 루트 로컬 좌표). 촉수는 갓 아래(0,-0.7)에서 +x·-y로 흘러내린다
 const WAVE_GLSL = /* glsl */ `
@@ -43,7 +43,14 @@ function waveCPU(p, time, thrust, len, out) {
 function membraneMaterial(spec, uniforms, wave) {
   const lin = (c) => new THREE.Vector3(...c);
   return new THREE.ShaderMaterial({
-    uniforms: { ...uniforms, uBase: { value: lin(spec.base) }, uRim: { value: lin(spec.rim) }, uAlpha: { value: new THREE.Vector2(...spec.alpha) }, uGlow: { value: spec.glow } },
+    uniforms: {
+      ...uniforms,
+      uBase: { value: lin(spec.base) },
+      uRim: { value: lin(spec.rim) },
+      uAlpha: { value: new THREE.Vector2(...spec.alpha) },
+      uGlow: { value: spec.glow },
+      uSat: { value: spec.sat ?? 1 },
+    },
     vertexShader: /* glsl */ `
       ${WAVE_GLSL}
       varying vec3 vN;
@@ -60,11 +67,16 @@ function membraneMaterial(spec, uniforms, wave) {
       uniform vec3 uRim;
       uniform vec2 uAlpha;
       uniform float uGlow;
+      uniform float uSat;
       varying vec3 vN;
       varying vec3 vV;
       void main() {
         float f = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 2.2);
         vec3 col = mix(uBase, uRim, f) * (0.6 + uGlow * (0.4 + f));
+        // 밝아질수록 흰색으로 뭉개지던 것을 막고 색조를 살린다
+        float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+        col = max(vec3(0.0), mix(vec3(l), col, uSat));
+        col /= 1.0 + max(l - 0.92, 0.0);
         gl_FragColor = vec4(col, mix(uAlpha.x, uAlpha.y, f));
         #include <colorspace_fragment>
       }`,
@@ -103,7 +115,7 @@ export class VoyageScene {
 
     pano.colorSpace = THREE.SRGBColorSpace;
     const skyMat = new THREE.MeshBasicMaterial({ map: pano, side: THREE.BackSide, depthWrite: false, toneMapped: false });
-    this.brighten(skyMat, BRIGHT.sky, 1.4);
+    this.brighten(skyMat, BRIGHT.sky, 1.4, false, BRIGHT.sat.sky);
     const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 64, 32), skyMat);
     sky.scale.x = -1;
     sky.rotation.y = -Math.PI / 2;
@@ -130,7 +142,7 @@ export class VoyageScene {
         o.renderOrder = 2;
       } else {
         o.material = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false, side: THREE.DoubleSide });
-        this.brighten(o.material, BRIGHT.baked, 1, inTentacles);
+        this.brighten(o.material, BRIGHT.baked, 1, inTentacles, BRIGHT.sat.baked);
       }
       m.dispose();
       o.frustumCulled = false;
@@ -152,14 +164,14 @@ export class VoyageScene {
     this.beadRest = (meta.beads ?? []).map((p) => new THREE.Vector3(...p));
     beadGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.beadRest.length * 3), 3));
     // 갓 전체를 감싸는 은은한 빛무리(참고 일러스트의 화사한 발광)
-    this.halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: '#C9A6FF', transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false, opacity: 0.22 }));
+    this.halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: '#B486FF', transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false, opacity: 0.15 }));
     this.halo.position.set(0, 1.2, 0);
-    this.halo.scale.setScalar(17);
+    this.halo.scale.setScalar(15);
     this.halo.renderOrder = 1;
     this.bell?.add(this.halo);
-    this.core = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: '#FFD9A8', transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false, opacity: 0.7 }));
+    this.core = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: '#FFC77E', transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false, opacity: 0.34 }));
     this.core.position.set(0, 1.4, 0);
-    this.core.scale.setScalar(6.5);
+    this.core.scale.setScalar(5);
     this.bell?.add(this.core);
     this.beads = new THREE.Points(beadGeo, new THREE.PointsMaterial({ map: glowTexture(), color: '#FFD4A6', size: 1.25, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
     this.beads.frustumCulled = false;
@@ -178,8 +190,8 @@ export class VoyageScene {
     this._v = new THREE.Vector3();
   }
 
-  /** 화사하게: 색 × gain + 라일락 띄움(liftK배), wave면 촉수 물결도 넣는다 */
-  brighten(material, gain, liftK = 1, wave = false) {
+  /** 화사하게: 색 × gain + 라일락 띄움(liftK배) + 채도 올리기, wave면 촉수 물결도 넣는다 */
+  brighten(material, gain, liftK = 1, wave = false, sat = 1) {
     const [lr, lg, lb] = BRIGHT.lift.map((v) => v * liftK);
     material.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, this.uniforms);
@@ -233,9 +245,9 @@ export class VoyageScene {
     }
     pos.needsUpdate = true;
     this.beads.material.size = 1.15 + pulse * 0.4;
-    this.halo.material.opacity = 0.18 + pulse * 0.08;
-    this.core.material.opacity = 0.5 + pulse * 0.2;
-    for (const [i, g] of this.glows.entries()) g.material.opacity = 0.45 + pulse * 0.25 + Math.sin(t * 2 + i) * 0.05;
+    this.halo.material.opacity = 0.12 + pulse * 0.06;
+    this.core.material.opacity = 0.24 + pulse * 0.12;
+    for (const [i, g] of this.glows.entries()) g.material.opacity = 0.36 + pulse * 0.2 + Math.sin(t * 2 + i) * 0.05;
 
     // 카메라: 해파리 둘레를 한 방향으로 돌면서 조금씩 다가가(클로즈업) 끝에는 갓 속 정원이 화면을 채운다
     const Y0 = 2; // 해파리 루트 높이
