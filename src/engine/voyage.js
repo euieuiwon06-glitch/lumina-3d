@@ -15,7 +15,19 @@ const MEMBRANE = {
   Crystal: { base: [0.54, 0.99, 0.94], rim: [0.8, 1.0, 0.98], alpha: [0.55, 0.95], glow: 0.95, sat: 1.25 },
 };
 // 구운 부분(정원·섬)·하늘: 곱해서 띄우기만 하면 색이 빠지므로, 띄움을 줄이고 채도를 함께 올린다
-const BRIGHT = { baked: 1.18, sky: 1.12, lift: [0.012, 0.01, 0.034], sat: { baked: 1.46, sky: 1.5 } };
+// 배경(성운·떠 있는 섬)은 회색빛으로 가라앉아 있어, 채도가 낮은 곳을 더 많이 올리는
+// 선명도 보정(vib)을 따로 쓴다. 해파리 쪽은 기존 채도 보정 그대로 둔다.
+const BRIGHT = {
+  baked: 1.18,
+  sky: 1.26,
+  island: 1.24,
+  lift: [0.012, 0.01, 0.034],
+  sat: { baked: 1.46, sky: 1.3, island: 1.3 },
+  vib: { sky: 1.05, island: 0.75 },
+  // 성운 구름이 원래 거의 흰색이라 채도만으로는 색이 안 난다.
+  // 어두운 곳은 남보라로, 밝은 곳은 분홍 라일락으로 물들여 화사하게 만든다.
+  tint: { sky: { lo: [0.8, 0.72, 1.2], hi: [1.26, 0.89, 1.12] }, island: { lo: [0.94, 0.9, 1.08], hi: [1.08, 0.97, 1.05] } },
+};
 
 // 촉수 물결(해파리 루트 로컬 좌표). 촉수는 갓 아래(0,-0.7)에서 +x·-y로 흘러내린다
 const WAVE_GLSL = /* glsl */ `
@@ -115,7 +127,7 @@ export class VoyageScene {
 
     pano.colorSpace = THREE.SRGBColorSpace;
     const skyMat = new THREE.MeshBasicMaterial({ map: pano, side: THREE.BackSide, depthWrite: false, toneMapped: false });
-    this.brighten(skyMat, BRIGHT.sky, 1.4, false, BRIGHT.sat.sky);
+    this.brighten(skyMat, BRIGHT.sky, 1.0, false, BRIGHT.sat.sky, BRIGHT.vib.sky, BRIGHT.tint.sky);
     const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 64, 32), skyMat);
     sky.scale.x = -1;
     sky.rotation.y = -Math.PI / 2;
@@ -132,6 +144,10 @@ export class VoyageScene {
     this.jelly = jelly;
     this.bell = root.getObjectByName('JF_Bell');
     this.tentacles = root.getObjectByName('JF_Tentacles');
+    const underIsland = (o) => {
+      for (let p = o; p && p !== root; p = p.parent) if (p.name.startsWith('Island_')) return true;
+      return false;
+    };
     root.traverse((o) => {
       if (!o.isMesh) return;
       const inTentacles = !!this.tentacles && (o === this.tentacles || o.parent === this.tentacles);
@@ -142,7 +158,9 @@ export class VoyageScene {
         o.renderOrder = 2;
       } else {
         o.material = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false, side: THREE.DoubleSide });
-        this.brighten(o.material, BRIGHT.baked, 1, inTentacles, BRIGHT.sat.baked);
+        // 배경(떠 있는 섬)은 해파리보다 색을 더 살린다
+        const isle = underIsland(o);
+        this.brighten(o.material, isle ? BRIGHT.island : BRIGHT.baked, 1, inTentacles, isle ? BRIGHT.sat.island : BRIGHT.sat.baked, isle ? BRIGHT.vib.island : 0, isle ? BRIGHT.tint.island : null);
       }
       m.dispose();
       o.frustumCulled = false;
@@ -190,8 +208,12 @@ export class VoyageScene {
     this._v = new THREE.Vector3();
   }
 
-  /** 화사하게: 색 × gain + 라일락 띄움(liftK배) + 채도 올리기, wave면 촉수 물결도 넣는다 */
-  brighten(material, gain, liftK = 1, wave = false, sat = 1) {
+  /**
+   * 화사하게: 색 × gain + 라일락 띄움(liftK배) + 채도 올리기.
+   * vib > 0이면 가장 밝은 채널을 기준으로 올려(흰색으로 클리핑되지 않는다) 채도가 낮은 곳을 더 많이 살린다.
+   * wave면 촉수 물결도 넣는다.
+   */
+  brighten(material, gain, liftK = 1, wave = false, sat = 1, vib = 0, tint = null) {
     const [lr, lg, lb] = BRIGHT.lift.map((v) => v * liftK);
     material.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, this.uniforms);

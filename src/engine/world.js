@@ -5,6 +5,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
 
 import { decodeGrid } from './walkgrid.js';
+import { createWaterMaterial } from './water.js';
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -37,6 +38,10 @@ function gradeMaterial(material, { saturation = 1, gain = 1, lift = [0, 0, 0] })
 }
 
 const GLOW_MATERIALS = { M_QuestVeinMint: '#C4F7E4', M_QuestGlowPeach: '#FFE2C4' };
+// 물 재질: 구운 색만으로는 단색 판이 되어 잔물결·하늘 비침·반짝임을 셰이더로 그린다
+const WATER_MATERIALS = {
+  M_LilacLagoon: { reflect: 0.78, ripple: 1.15, scale: 0.5, speed: 0.85, alpha: [0.55, 0.96], tint: [1.06, 1.0, 1.12], deep: 0.76, sparkle: 0.7 },
+};
 
 // 장면별 보정(파노라마 밝기·환경광·조명). 검수 스크린샷을 기준 렌더와 비교해 조정
 export const LOOK = {
@@ -142,6 +147,7 @@ export class World {
 
     this.root = gltf.scene;
     this.colliders = [];
+    this.waterMats = [];
     this.meshByName.clear();
     this.root.traverse((o) => {
       if (!o.isMesh) return;
@@ -154,6 +160,15 @@ export class World {
         const scale = display ? 1 : (meta.baked.scale ?? 4);
         o.material = mats.map((m) => {
           // 가는 발광 선(퀘스트 빛줄기·고리)은 정점이 적어 구운 색이 어두워지므로 발광색을 그대로 쓴다
+          const water = WATER_MATERIALS[m.name];
+          if (water) {
+            const w = createWaterMaterial(pano, water);
+            w.name = m.name;
+            this.waterMats.push(w);
+            o.renderOrder = 3;
+            m.dispose();
+            return w;
+          }
           const glow = GLOW_MATERIALS[m.name];
           if (glow) {
             const b = new THREE.MeshBasicMaterial({ color: glow, toneMapped: false });
@@ -224,6 +239,12 @@ export class World {
       this.sunDir = new THREE.Vector3(0, -1, 0);
     }
     this.pointLights = this.lights.filter((l) => l.type !== 'SUN');
+    // 물의 반짝임은 해(달)를 향하는 방향을 쓴다
+    for (const w of this.waterMats) {
+      const u = w.userData.waterUniforms;
+      u.uSun.value.copy(this.sunDir).negate().normalize();
+      u.uSunColor.value.copy(this.sun.intensity > 0 ? this.sun.color : new THREE.Color(1, 0.94, 0.86));
+    }
     this.poolTimer = 0;
     this.renderer.toneMappingExposure = look.exposure;
     return this;
@@ -243,11 +264,13 @@ export class World {
     this.dynamic.clear();
     this.envRT?.dispose();
     this.panoTex?.dispose();
+    this.waterMats = [];
     this.root = null;
   }
 
   /** 플레이어 가까운 조명만 조명 풀에 배정(셰이더 재컴파일 없이) */
   update(dt, focus) {
+    for (const w of this.waterMats ?? []) w.userData.waterUniforms.uTime.value += dt;
     this.sky.position.copy(focus.camera);
     this.sun.position.copy(focus.target).addScaledVector(this.sunDir, -30);
     this.sun.target.position.copy(focus.target);
